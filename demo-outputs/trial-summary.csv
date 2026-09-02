@@ -1,0 +1,4 @@
+video,duration_seconds,fps,target_hole,primary_latency_seconds,total_latency_seconds,primary_errors,total_errors,path_cm,speed_cm_s,target_quadrant_percent,strategy,tracked_percent,manual_corrections
+test50.mp4,185.07,30 fps,6,34.8,177.3,4,17,683.5,3.9,38.5,serial,92.4,1
+test51.mp4,49.38,15000/1001 fps,10,11.6,42.1,2,6,192.4,4.3,21.7,spatial,86.1,0
+test53.mp4,30.23,30 fps,4,18.2,27.9,5,7,148.9,5.2,18.9,random,89.8,0
