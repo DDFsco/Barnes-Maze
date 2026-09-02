@@ -2,7 +2,7 @@
 
 BarnesAI is a browser-first Barnes maze analysis workbench for the Salk AIRC RSE take-home Task 1. It is designed for students and facility staff who need to turn behavior videos into reviewable metrics and spreadsheet exports without touching a terminal in day-to-day use.
 
-Live URL: pending deployment.
+Live URL: https://barnesai.ddfsco.chatgpt.site
 
 Demo video: pending recording.
 
@@ -85,4 +85,3 @@ npm run build
 ## Known Submission Gaps
 
 This is not yet a complete take-home submission. The next implementation steps are real video frame extraction, automatic platform/hole registration, browser CV tracking, frame-accurate manual correction, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and demo video.
-
