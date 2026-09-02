@@ -11,7 +11,6 @@ import {
   RotateCcw,
   Save,
 } from 'lucide-react';
-import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
 
 type SampleVideo = {
@@ -341,12 +340,10 @@ export default function Home() {
                 }}
                 type="button"
               >
-                <Image
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   alt=""
-                  height={56}
                   src={sample.frame}
-                  unoptimized
-                  width={80}
                 />
                 <span>
                   <strong>{sample.fileName}</strong>
@@ -410,12 +407,10 @@ export default function Home() {
           </div>
 
           <div className="video-stage">
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               alt={`Representative frame from ${selected.fileName}`}
-              fill
-              priority
               src={selected.frame}
-              unoptimized
             />
             <svg aria-hidden="true" viewBox="0 0 640 480">
               <circle
