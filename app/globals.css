@@ -633,6 +633,22 @@ body {
     @apply mt-2 grid gap-1 rounded-md border border-border bg-muted/40 p-2 text-xs;
   }
 
+  .tracking-progress {
+    @apply h-2 w-full overflow-hidden rounded-full border-0 bg-border;
+  }
+
+  .tracking-progress::-webkit-progress-bar {
+    @apply rounded-full bg-border;
+  }
+
+  .tracking-progress::-webkit-progress-value {
+    @apply rounded-full bg-primary transition-all duration-200;
+  }
+
+  .tracking-progress::-moz-progress-bar {
+    @apply rounded-full bg-primary;
+  }
+
   .analysis-readout.ready {
     @apply border-primary/25 bg-secondary/65;
   }
@@ -661,6 +677,10 @@ body {
   .analysis-readout span,
   .tracking-readout span {
     @apply text-muted-foreground;
+  }
+
+  .tracking-readout small {
+    @apply text-[11px] font-medium text-muted-foreground;
   }
 
   .skeleton-panel {

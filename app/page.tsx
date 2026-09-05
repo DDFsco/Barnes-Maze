@@ -334,6 +334,8 @@ export default function Home() {
   const savedFrameCount = Object.values(annotationStore[activeVideoKey] ?? {}).filter(
     (annotation) => annotation.touched,
   ).length;
+  const trackingPercent =
+    trackingRun.total > 0 ? clamp((trackingRun.processed / trackingRun.total) * 100, 0, 100) : 0;
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -1518,13 +1520,25 @@ export default function Home() {
                 <div className={`tracking-readout ${trackingRun.status}`}>
                   <strong>
                     {trackingRun.status === 'running'
-                      ? `${trackingRun.processed} / ${trackingRun.total} frames`
+                      ? `${Math.round(trackingPercent)}% complete`
                       : trackingRun.status === 'done'
                         ? `${trackingRun.saved} frames saved`
                         : trackingRun.status === 'error'
                           ? 'Tracking needs review'
                           : 'Tracking idle'}
                   </strong>
+                  <progress
+                    aria-label="Tracking progress"
+                    className="tracking-progress"
+                    max={trackingRun.total || 100}
+                    value={trackingRun.processed}
+                  >
+                    {Math.round(trackingPercent)}%
+                  </progress>
+                  <small>
+                    {trackingRun.processed} / {trackingRun.total || 0} frames · {trackingRun.saved}{' '}
+                    saved
+                  </small>
                   <span>{trackingRun.message}</span>
                 </div>
               </div>
