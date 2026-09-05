@@ -630,8 +630,16 @@ body {
     @apply font-semibold;
   }
 
+  .skeleton-panel-actions {
+    @apply flex gap-1;
+  }
+
   .skeleton-panel-heading button {
     @apply inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs font-semibold transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .skeleton-panel-heading button:disabled {
+    @apply cursor-not-allowed opacity-45 hover:bg-card;
   }
 
   .skeleton-tree {

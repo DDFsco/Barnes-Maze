@@ -67,10 +67,11 @@ npm run dev
    - `Visit`: click near a well to add a manual investigation event.
    - `Escape`: click near a well to add a manual escape event.
 7. Use the dock immediately to the right of the video window, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
-8. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-9. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-10. Click `Download CSV` for the trial summary.
-11. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, skeletons, and correction records.
+8. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
+9. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
+10. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+11. Click `Download CSV` for the trial summary.
+12. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, skeletons, and correction records.
 
 ## Design Details
 

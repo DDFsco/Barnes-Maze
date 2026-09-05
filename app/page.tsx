@@ -495,6 +495,14 @@ export default function Home() {
     setCorrections((value) => value + 1);
   }
 
+  function removeSelectedSkeleton() {
+    if (!selectedSkeleton) return;
+    const nextSkeletons = skeletons.filter((skeleton) => skeleton.id !== selectedSkeleton.id);
+    setSkeletons(nextSkeletons);
+    setSelectedSkeletonId(nextSkeletons[0]?.id ?? 0);
+    setCorrections((value) => value + 1);
+  }
+
   function toggleLayer(layer: keyof LayerVisibility) {
     setLayers((current) => ({ ...current, [layer]: !current[layer] }));
   }
@@ -970,9 +978,18 @@ export default function Home() {
               <div className="skeleton-panel">
                 <div className="skeleton-panel-heading">
                   <h3>Mice / Skeleton</h3>
-                  <button onClick={() => addSkeleton()} type="button">
-                    Add nodes
-                  </button>
+                  <div className="skeleton-panel-actions">
+                    <button onClick={() => addSkeleton()} type="button">
+                      Add nodes
+                    </button>
+                    <button
+                      disabled={!selectedSkeleton}
+                      onClick={removeSelectedSkeleton}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
                 <div className="skeleton-tree">
                   {skeletons.map((skeleton) => (
