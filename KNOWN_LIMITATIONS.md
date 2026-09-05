@@ -1,6 +1,7 @@
 # Known Limitations
 
-- This slice can load and play local MP4 files, but it does not yet extract frames into canvas for computer vision.
+- This slice can load and play local MP4 files and extract the current frame into canvas for a draft browser-side detector, but it does not yet run multi-frame tracking.
+- The current-frame detector uses classical dark-component analysis inside the aligned platform ROI; it is a review aid, not a trained pose-estimation model.
 - The overlay can be aligned over a local video, rotated, scaled, adjusted per well, and used for layer-based body/nose/event annotations.
 - Metrics are draft placeholder outputs based on inspected sample metadata and plausible trial summaries, not validated ground truth.
 - Nose position is shown as a `nose_proxy`; it is not a trained pose-estimation result.

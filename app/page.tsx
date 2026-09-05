@@ -59,6 +59,17 @@ type FrameAnnotation = {
 
 type AnnotationStore = Record<string, Record<string, FrameAnnotation>>;
 
+type FrameAnalysis = {
+  status: 'idle' | 'ready' | 'error';
+  message: string;
+  confidence: number;
+  source: 'video' | 'sample';
+  darkPixels: number;
+  componentPixels: number;
+  body?: Point;
+  nose?: Point;
+};
+
 type LayerVisibility = {
   maze: boolean;
   wells: boolean;
@@ -196,6 +207,15 @@ const statuses = [
 
 const annotationStorageKey = 'barnesai.frameAnnotations.v1';
 
+const initialAnalysis: FrameAnalysis = {
+  status: 'idle',
+  message: 'No frame analyzed yet',
+  confidence: 0,
+  source: 'sample',
+  darkPixels: 0,
+  componentPixels: 0,
+};
+
 function formatSeconds(value: number) {
   const safeValue = Number.isFinite(value) ? value : 0;
   const minutes = Math.floor(safeValue / 60);
@@ -244,6 +264,8 @@ function makeFrameAnnotation(body: Point): FrameAnnotation {
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const frameImageRef = useRef<HTMLImageElement | null>(null);
+  const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState(samples[0].id);
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
@@ -273,6 +295,7 @@ export default function Home() {
     skeletons: true,
     events: true,
   });
+  const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis>(initialAnalysis);
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
 
@@ -381,6 +404,7 @@ export default function Home() {
                 savedFrameCount,
                 frameTouched: frameAnnotation.touched,
               },
+              frameAnalysis,
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -422,6 +446,7 @@ export default function Home() {
     savedFrameCount,
     targetHole,
     frameAnnotation.touched,
+    frameAnalysis,
   ]);
 
   function selectSample(sample: SampleVideo) {
@@ -435,6 +460,7 @@ export default function Home() {
     setFps(sample.fpsValue);
     setCurrentTime(0);
     setToolMode('select');
+    setFrameAnalysis(initialAnalysis);
   }
 
   function loadVideo(file: File) {
@@ -449,6 +475,7 @@ export default function Home() {
     });
     setCurrentTime(0);
     setIsPlaying(false);
+    setFrameAnalysis({ ...initialAnalysis, source: 'video' });
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }
 
@@ -456,6 +483,7 @@ export default function Home() {
     const safeFrame = clamp(frame, 0, totalFrames - 1);
     const nextTime = safeFrame / fps;
     setCurrentTime(nextTime);
+    setFrameAnalysis({ ...initialAnalysis, source: uploadedVideo ? 'video' : 'sample' });
     if (videoRef.current) videoRef.current.currentTime = nextTime;
   }
 
@@ -604,6 +632,219 @@ export default function Home() {
       events: [],
     }));
     setCorrections((value) => value + 1);
+  }
+
+  function nearestHoleDistance(point: Point) {
+    return holes.reduce((nearest, hole) => {
+      const distanceToHole = Math.hypot(hole.x - point.x, hole.y - point.y);
+      return Math.min(nearest, distanceToHole);
+    }, Infinity);
+  }
+
+  function analyzeImageData(imageData: ImageData): FrameAnalysis {
+    const { data, width, height } = imageData;
+    const insideRoi = new Uint8Array(width * height);
+    const candidates = new Uint8Array(width * height);
+    let luminanceSum = 0;
+    let luminanceSquaredSum = 0;
+    let roiPixels = 0;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const platformDistance = Math.hypot(x - platform.x, y - platform.y);
+        const holeDistance = nearestHoleDistance({ x, y });
+        const isInsidePlatform = platformDistance < platform.r * 0.95;
+        const isAwayFromHole = holeDistance > 13;
+        if (!isInsidePlatform || !isAwayFromHole) continue;
+        const offset = (y * width + x) * 4;
+        const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+        const index = y * width + x;
+        insideRoi[index] = 1;
+        luminanceSum += luminance;
+        luminanceSquaredSum += luminance * luminance;
+        roiPixels += 1;
+      }
+    }
+
+    if (roiPixels < 1000) {
+      return {
+        ...initialAnalysis,
+        status: 'error',
+        message: 'ROI is too small for frame analysis',
+        source: uploadedVideo ? 'video' : 'sample',
+      };
+    }
+
+    const mean = luminanceSum / roiPixels;
+    const variance = luminanceSquaredSum / roiPixels - mean * mean;
+    const standardDeviation = Math.sqrt(Math.max(variance, 0));
+    const threshold = Math.max(15, Math.min(115, mean - standardDeviation * 0.75));
+    let darkPixels = 0;
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const index = y * width + x;
+        if (!insideRoi[index]) continue;
+        const offset = index * 4;
+        const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+        if (luminance < threshold) {
+          candidates[index] = 1;
+          darkPixels += 1;
+        }
+      }
+    }
+
+    const visited = new Uint8Array(width * height);
+    let bestComponent: {
+      pixels: number;
+      sumX: number;
+      sumY: number;
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+    } | null = null;
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const startIndex = y * width + x;
+        if (!candidates[startIndex] || visited[startIndex]) continue;
+
+        const stack = [startIndex];
+        visited[startIndex] = 1;
+        let pixels = 0;
+        let sumX = 0;
+        let sumY = 0;
+        let minX = x;
+        let maxX = x;
+        let minY = y;
+        let maxY = y;
+
+        while (stack.length > 0) {
+          const index = stack.pop();
+          if (index === undefined) continue;
+          const pixelX = index % width;
+          const pixelY = Math.floor(index / width);
+          pixels += 1;
+          sumX += pixelX;
+          sumY += pixelY;
+          minX = Math.min(minX, pixelX);
+          maxX = Math.max(maxX, pixelX);
+          minY = Math.min(minY, pixelY);
+          maxY = Math.max(maxY, pixelY);
+
+          const neighbors = [index - 1, index + 1, index - width, index + width];
+          for (const neighbor of neighbors) {
+            if (neighbor < 0 || neighbor >= candidates.length) continue;
+            if (!candidates[neighbor] || visited[neighbor]) continue;
+            visited[neighbor] = 1;
+            stack.push(neighbor);
+          }
+        }
+
+        const componentWidth = maxX - minX + 1;
+        const componentHeight = maxY - minY + 1;
+        const plausibleSize = pixels >= 18 && pixels <= 6500;
+        const plausibleShape = componentWidth <= platform.r * 0.8 && componentHeight <= platform.r * 0.8;
+        if (plausibleSize && plausibleShape && (!bestComponent || pixels > bestComponent.pixels)) {
+          bestComponent = { pixels, sumX, sumY, minX, maxX, minY, maxY };
+        }
+      }
+    }
+
+    if (!bestComponent) {
+      return {
+        status: 'error',
+        message: 'No plausible mouse-sized dark component found',
+        confidence: 0,
+        source: uploadedVideo ? 'video' : 'sample',
+        darkPixels,
+        componentPixels: 0,
+      };
+    }
+
+    const body = {
+      x: bestComponent.sumX / bestComponent.pixels,
+      y: bestComponent.sumY / bestComponent.pixels,
+    };
+    const nearestTarget = holes.reduce((nearest, hole) => {
+      const holeDistance = Math.hypot(hole.x - body.x, hole.y - body.y);
+      return holeDistance < nearest.distance ? { hole, distance: holeDistance } : nearest;
+    }, { hole: holes[0], distance: Infinity }).hole;
+    const vectorLength = Math.max(1, Math.hypot(nearestTarget.x - body.x, nearestTarget.y - body.y));
+    const nose = {
+      x: clamp(body.x + ((nearestTarget.x - body.x) / vectorLength) * 14, 0, width),
+      y: clamp(body.y + ((nearestTarget.y - body.y) / vectorLength) * 14, 0, height),
+    };
+    const occupancy = bestComponent.pixels / Math.max(1, darkPixels);
+    const confidence = clamp(occupancy * 1.6, 0.15, 0.86);
+
+    return {
+      status: 'ready',
+      message: `Detected dark component at ${Math.round(body.x)}, ${Math.round(body.y)}`,
+      confidence,
+      source: uploadedVideo ? 'video' : 'sample',
+      darkPixels,
+      componentPixels: bestComponent.pixels,
+      body,
+      nose,
+    };
+  }
+
+  function analyzeCurrentFrame() {
+    const canvas = analysisCanvasRef.current;
+    const context = canvas?.getContext('2d', { willReadFrequently: true });
+    if (!canvas || !context) {
+      setFrameAnalysis({
+        ...initialAnalysis,
+        status: 'error',
+        message: 'Frame canvas is not available',
+        source: uploadedVideo ? 'video' : 'sample',
+      });
+      return;
+    }
+
+    canvas.width = 640;
+    canvas.height = 480;
+    context.clearRect(0, 0, 640, 480);
+    const source = uploadedVideo ? videoRef.current : frameImageRef.current;
+
+    try {
+      if (!source) throw new Error('Frame source is not available');
+      context.drawImage(source, 0, 0, 640, 480);
+      const result = analyzeImageData(context.getImageData(0, 0, 640, 480));
+      setFrameAnalysis(result);
+      if (result.status === 'ready' && result.body && result.nose) {
+        const nextId = selectedSkeleton?.id ?? 1;
+        updateFrameAnnotation((annotation) => {
+          const nextSkeleton = {
+            id: nextId,
+            label: `Mouse ${nextId}`,
+            body: result.body as Point,
+            nose: result.nose as Point,
+          };
+          const hasSkeleton = annotation.skeletons.some((skeleton) => skeleton.id === nextId);
+          return {
+            ...annotation,
+            skeletons: hasSkeleton
+              ? annotation.skeletons.map((skeleton) =>
+                  skeleton.id === nextId ? nextSkeleton : skeleton,
+                )
+              : [...annotation.skeletons, nextSkeleton],
+            selectedSkeletonId: nextId,
+          };
+        });
+        setLayers((current) => ({ ...current, skeletons: true }));
+        setCorrections((value) => value + 1);
+      }
+    } catch (error) {
+      setFrameAnalysis({
+        ...initialAnalysis,
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unable to read current frame',
+        source: uploadedVideo ? 'video' : 'sample',
+      });
+    }
   }
 
   function toggleLayer(layer: keyof LayerVisibility) {
@@ -775,6 +1016,7 @@ export default function Home() {
         savedFrameCount,
         correctionCount: corrections,
       },
+      frameAnalysis,
       thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
       source: 'BarnesAI annotation surface state',
     },
@@ -973,7 +1215,11 @@ export default function Home() {
                 ) : (
                   <>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img alt={`Representative frame from ${selected.fileName}`} src={selected.frame} />
+                    <img
+                      alt={`Representative frame from ${selected.fileName}`}
+                      ref={frameImageRef}
+                      src={selected.frame}
+                    />
                   </>
                 )}
                 <svg
@@ -1077,6 +1323,25 @@ export default function Home() {
                 <p>Events: {events.length}</p>
                 <p>Status: {frameAnnotation.touched ? 'saved manual frame' : 'preset draft'}</p>
                 <p>Saved frames: {savedFrameCount}</p>
+                <button className="analysis-button" onClick={analyzeCurrentFrame} type="button">
+                  Analyze frame
+                </button>
+                <div className={`analysis-readout ${frameAnalysis.status}`}>
+                  <strong>
+                    {frameAnalysis.status === 'ready'
+                      ? `${Math.round(frameAnalysis.confidence * 100)}% draft confidence`
+                      : frameAnalysis.status === 'error'
+                        ? 'Analysis needs review'
+                        : 'Frame analysis idle'}
+                  </strong>
+                  <span>{frameAnalysis.message}</span>
+                  {frameAnalysis.status === 'ready' ? (
+                    <span>
+                      Component {frameAnalysis.componentPixels} px / dark field{' '}
+                      {frameAnalysis.darkPixels} px
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="skeleton-panel">
@@ -1275,6 +1540,13 @@ export default function Home() {
             Select a tool, then click or drag directly on the overlay. Left/right arrow
             keys step by frame; space toggles playback.
           </p>
+          <canvas
+            aria-hidden="true"
+            className="analysis-canvas"
+            height="480"
+            ref={analysisCanvasRef}
+            width="640"
+          />
         </section>
 
         <aside className="panel order-3">

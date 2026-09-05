@@ -609,6 +609,30 @@ body {
     @apply text-muted-foreground;
   }
 
+  .analysis-button {
+    @apply mt-2 inline-flex min-h-8 w-full items-center justify-center rounded-md border border-primary/35 bg-primary/10 px-2 text-xs font-semibold text-primary transition hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .analysis-readout {
+    @apply mt-2 grid gap-1 rounded-md border border-border bg-muted/40 p-2 text-xs;
+  }
+
+  .analysis-readout.ready {
+    @apply border-primary/25 bg-secondary/65;
+  }
+
+  .analysis-readout.error {
+    @apply border-destructive/30 bg-destructive/5;
+  }
+
+  .analysis-readout strong {
+    @apply text-foreground;
+  }
+
+  .analysis-readout span {
+    @apply text-muted-foreground;
+  }
+
   .skeleton-panel {
     @apply mt-4 rounded-md border border-border bg-background p-3 text-sm;
   }
@@ -665,5 +689,9 @@ body {
 
   .skeleton-tree span {
     @apply mt-0.5 text-xs text-muted-foreground;
+  }
+
+  .analysis-canvas {
+    @apply hidden;
   }
 }
