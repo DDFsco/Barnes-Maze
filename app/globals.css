@@ -208,6 +208,50 @@ body {
     @apply bg-accent text-accent-foreground;
   }
 
+  .trial-strip {
+    @apply mb-3 flex flex-wrap items-stretch gap-2 rounded-md border border-border bg-background p-2;
+  }
+
+  .trial-card {
+    @apply flex min-w-44 items-center gap-2 rounded-md border border-transparent p-2 text-left transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .trial-card.active {
+    @apply border-primary/40 bg-secondary;
+  }
+
+  .trial-card img {
+    @apply h-10 w-14 rounded object-cover grayscale;
+  }
+
+  .trial-card span {
+    @apply min-w-0;
+  }
+
+  .trial-card strong {
+    @apply block truncate text-sm;
+  }
+
+  .trial-card small {
+    @apply block text-xs text-muted-foreground;
+  }
+
+  .status-strip {
+    @apply flex min-w-fit flex-wrap items-center gap-1 border-l border-border pl-2;
+  }
+
+  .status-strip span {
+    @apply rounded px-2 py-1 text-xs font-semibold;
+  }
+
+  .status-strip .good {
+    @apply bg-secondary text-secondary-foreground;
+  }
+
+  .status-strip .warn {
+    @apply bg-accent text-accent-foreground;
+  }
+
   .icon-strip {
     @apply flex items-center gap-1;
   }
@@ -253,23 +297,23 @@ body {
   }
 
   .canvas-workspace {
-    @apply relative rounded-md border border-border bg-muted/30 p-3;
+    @apply grid gap-3 rounded-md border border-border bg-muted/30 p-3 lg:grid-cols-[128px_minmax(0,1fr)_210px];
   }
 
   .canvas-center {
-    @apply min-w-0;
+    @apply order-2 min-w-0;
   }
 
   .canvas-dock {
-    @apply absolute top-6 z-10 max-h-[calc(100%-3rem)] overflow-auto rounded-md border border-border bg-card/90 p-2 shadow-md backdrop-blur;
+    @apply min-w-0 rounded-md border border-border bg-card p-2 shadow-sm;
   }
 
   .canvas-dock-left {
-    @apply left-6 w-32;
+    @apply order-1;
   }
 
   .canvas-dock-right {
-    @apply right-6 w-52;
+    @apply order-3;
   }
 
   .canvas-dock h3 {

@@ -715,66 +715,8 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-[96rem] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[220px_minmax(720px,1fr)_260px]">
-        <aside className="panel order-2 xl:order-1">
-          <div className="panel-heading">
-            <h2>Session</h2>
-            <span>{uploadedVideo ? 'local video loaded' : '3 sample videos'}</span>
-          </div>
-          {uploadedVideo ? (
-            <button
-              aria-label={`Selected local video ${uploadedVideo.name}`}
-              className="video-row active"
-              type="button"
-            >
-              <span className="local-video-icon">
-                <Play size={18} aria-hidden="true" />
-              </span>
-              <span>
-                <strong>{uploadedVideo.name}</strong>
-                <small>
-                  local MP4 · {uploadedVideo.durationSeconds > 0
-                    ? formatSeconds(uploadedVideo.durationSeconds)
-                    : 'metadata pending'}
-                </small>
-              </span>
-            </button>
-          ) : null}
-          <div className="space-y-2">
-            {samples.map((sample) => (
-              <button
-                aria-label={`Select ${sample.fileName}`}
-                className={`video-row ${sample.id === selected.id && !uploadedVideo ? 'active' : ''}`}
-                key={sample.id}
-                onClick={() => {
-                  setUploadedVideo(null);
-                  selectSample(sample);
-                }}
-                type="button"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img alt="" src={sample.frame} />
-                <span>
-                  <strong>{sample.fileName}</strong>
-                  <small>
-                    {sample.frames.toLocaleString()} frames · {formatSeconds(sample.durationSeconds)}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {statuses.map((status) => (
-              <div className="status-row" key={status.name}>
-                <span>{status.name}</span>
-                <strong className={status.tone}>{status.value}</strong>
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel order-1 overflow-hidden xl:order-2">
+      <section className="mx-auto grid max-w-[108rem] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_270px]">
+        <section className="panel overflow-hidden">
           <div className="panel-heading">
             <div>
               <h2>{uploadedVideo ? 'Local trial review' : selected.label}</h2>
@@ -799,6 +741,56 @@ export default function Home() {
               >
                 <FileJson size={16} />
               </button>
+            </div>
+          </div>
+
+          <div className="trial-strip" aria-label="Session videos">
+            {uploadedVideo ? (
+              <button
+                aria-label={`Selected local video ${uploadedVideo.name}`}
+                className="trial-card active local"
+                type="button"
+              >
+                <span className="local-video-icon">
+                  <Play size={16} aria-hidden="true" />
+                </span>
+                <span>
+                  <strong>{uploadedVideo.name}</strong>
+                  <small>
+                    local MP4 · {uploadedVideo.durationSeconds > 0
+                      ? formatSeconds(uploadedVideo.durationSeconds)
+                      : 'metadata pending'}
+                  </small>
+                </span>
+              </button>
+            ) : null}
+            {samples.map((sample) => (
+              <button
+                aria-label={`Select ${sample.fileName}`}
+                className={`trial-card ${sample.id === selected.id && !uploadedVideo ? 'active' : ''}`}
+                key={sample.id}
+                onClick={() => {
+                  setUploadedVideo(null);
+                  selectSample(sample);
+                }}
+                type="button"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img alt="" src={sample.frame} />
+                <span>
+                  <strong>{sample.fileName}</strong>
+                  <small>
+                    {sample.frames.toLocaleString()} frames · {formatSeconds(sample.durationSeconds)}
+                  </small>
+                </span>
+              </button>
+            ))}
+            <div className="status-strip" aria-label="Workflow status">
+              {statuses.map((status) => (
+                <span className={status.tone} key={status.name}>
+                  {status.name}: {status.value}
+                </span>
+              ))}
             </div>
           </div>
 
