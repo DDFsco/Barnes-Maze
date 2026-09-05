@@ -715,7 +715,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[280px_minmax(0,1fr)_340px]">
+      <section className="mx-auto grid max-w-[96rem] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[220px_minmax(720px,1fr)_260px]">
         <aside className="panel order-2 xl:order-1">
           <div className="panel-heading">
             <h2>Session</h2>
@@ -772,43 +772,6 @@ export default function Home() {
               </div>
             ))}
           </div>
-
-          <div className="side-section">
-            <h3>Tools</h3>
-            <div className="tool-palette vertical" aria-label="Annotation tools">
-              {toolModes.map((tool) => (
-                <button
-                  className={toolMode === tool.id ? 'active' : ''}
-                  key={tool.id}
-                  onClick={() => setToolMode(tool.id)}
-                  type="button"
-                >
-                  {tool.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="side-section">
-            <h3>Layers</h3>
-            <div className="layer-list">
-              {([
-                ['maze', 'Platform boundary'],
-                ['wells', 'Wells'],
-                ['skeletons', 'Mice / Skeleton'],
-                ['events', 'Events'],
-              ] as Array<[keyof LayerVisibility, string]>).map(([layer, label]) => (
-                <label key={layer}>
-                  <input
-                    checked={layers[layer]}
-                    onChange={() => toggleLayer(layer)}
-                    type="checkbox"
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
         </aside>
 
         <section className="panel order-1 overflow-hidden xl:order-2">
@@ -839,112 +802,206 @@ export default function Home() {
             </div>
           </div>
 
-          <div className={`video-stage annotation-mode-${toolMode}`} ref={stageRef}>
-            {uploadedVideo ? (
-              <video
-                aria-label={`Loaded video ${uploadedVideo.name}`}
-                muted
-                onEnded={() => setIsPlaying(false)}
-                onLoadedMetadata={(event) => {
-                  const video = event.currentTarget;
-                  setUploadedVideo((current) =>
-                    current
-                      ? {
-                          ...current,
-                          durationSeconds: video.duration,
-                          width: video.videoWidth || 640,
-                          height: video.videoHeight || 480,
-                        }
-                      : current,
-                  );
-                }}
-                onPause={() => setIsPlaying(false)}
-                onPlay={() => setIsPlaying(true)}
-                onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-                ref={videoRef}
-                src={uploadedVideo.url}
-              />
-            ) : (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img alt={`Representative frame from ${selected.fileName}`} src={selected.frame} />
-              </>
-            )}
-            <svg
-              aria-label="Annotation overlay"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              viewBox="0 0 640 480"
-            >
-              {layers.maze ? (
-                <>
-                  <circle
-                    className="platform-ring"
-                    cx={platform.x}
-                    cy={platform.y}
-                    r={platform.r}
-                  />
-                  <circle className="platform-handle" cx={platform.x} cy={platform.y} r="5" />
-                </>
-              ) : null}
-              {layers.wells
-                ? holes.map((hole) => (
-                    <g className="hole-group" key={hole.id}>
-                      <circle className="hit-area" cx={hole.x} cy={hole.y} r="14" />
-                      <circle
-                        className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
-                        cx={hole.x}
-                        cy={hole.y}
-                        r="7"
-                      />
-                      <text x={hole.x + 9} y={hole.y + 3}>
-                        {hole.id}
-                      </text>
-                    </g>
-                  ))
-                : null}
-              {layers.skeletons
-                ? skeletons.map((skeleton) => (
-                    <g
-                      className={
-                        skeleton.id === selectedSkeletonId
-                          ? 'skeleton selected'
-                          : 'skeleton'
-                      }
-                      key={skeleton.id}
+          <div className="canvas-workspace">
+            <aside className="canvas-dock canvas-dock-left" aria-label="Overlay tools and layers">
+              <div className="dock-section">
+                <h3>Tools</h3>
+                <div className="tool-palette vertical" aria-label="Annotation tools">
+                  {toolModes.map((tool) => (
+                    <button
+                      className={toolMode === tool.id ? 'active' : ''}
+                      key={tool.id}
+                      onClick={() => setToolMode(tool.id)}
+                      type="button"
                     >
-                      <line
-                        className="nose-vector"
-                        x1={skeleton.body.x}
-                        x2={skeleton.nose.x}
-                        y1={skeleton.body.y}
-                        y2={skeleton.nose.y}
-                      />
-                      <circle className="hit-area" cx={skeleton.body.x} cy={skeleton.body.y} r="13" />
-                      <circle className="body-point" cx={skeleton.body.x} cy={skeleton.body.y} r="5" />
-                      <circle className="hit-area" cx={skeleton.nose.x} cy={skeleton.nose.y} r="11" />
-                      <circle className="nose-point" cx={skeleton.nose.x} cy={skeleton.nose.y} r="4" />
-                    </g>
-                  ))
-                : null}
-              {layers.events
-                ? events.map((event, index) => {
-                    const hole = holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
-                    return (
-                      <g className={`event-pin ${event.type}`} key={`${event.type}-${event.frame}-${index}`}>
-                        <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
-                      </g>
-                    );
-                  })
-                : null}
-            </svg>
-          </div>
+                      {tool.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          <div className="overlay-legend" aria-label="Overlay legend">
-            <span><i className="legend-body" /> Body point</span>
-            <span><i className="legend-nose" /> Nose proxy</span>
-            <span><i className="legend-target" /> Target well</span>
+              <div className="dock-section">
+                <h3>Layers</h3>
+                <div className="layer-list">
+                  {([
+                    ['maze', 'Platform'],
+                    ['wells', 'Wells'],
+                    ['skeletons', 'Mice / Skeleton'],
+                    ['events', 'Events'],
+                  ] as Array<[keyof LayerVisibility, string]>).map(([layer, label]) => (
+                    <label key={layer}>
+                      <input
+                        checked={layers[layer]}
+                        onChange={() => toggleLayer(layer)}
+                        type="checkbox"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </aside>
+
+            <div className="canvas-center">
+              <div className={`video-stage annotation-mode-${toolMode}`} ref={stageRef}>
+                {uploadedVideo ? (
+                  <video
+                    aria-label={`Loaded video ${uploadedVideo.name}`}
+                    muted
+                    onEnded={() => setIsPlaying(false)}
+                    onLoadedMetadata={(event) => {
+                      const video = event.currentTarget;
+                      setUploadedVideo((current) =>
+                        current
+                          ? {
+                              ...current,
+                              durationSeconds: video.duration,
+                              width: video.videoWidth || 640,
+                              height: video.videoHeight || 480,
+                            }
+                          : current,
+                      );
+                    }}
+                    onPause={() => setIsPlaying(false)}
+                    onPlay={() => setIsPlaying(true)}
+                    onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                    ref={videoRef}
+                    src={uploadedVideo.url}
+                  />
+                ) : (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img alt={`Representative frame from ${selected.fileName}`} src={selected.frame} />
+                  </>
+                )}
+                <svg
+                  aria-label="Annotation overlay"
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  viewBox="0 0 640 480"
+                >
+                  {layers.maze ? (
+                    <>
+                      <circle
+                        className="platform-ring"
+                        cx={platform.x}
+                        cy={platform.y}
+                        r={platform.r}
+                      />
+                      <circle className="platform-handle" cx={platform.x} cy={platform.y} r="5" />
+                    </>
+                  ) : null}
+                  {layers.wells
+                    ? holes.map((hole) => (
+                        <g className="hole-group" key={hole.id}>
+                          <circle className="hit-area" cx={hole.x} cy={hole.y} r="14" />
+                          <circle
+                            className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
+                            cx={hole.x}
+                            cy={hole.y}
+                            r="7"
+                          />
+                          <text x={hole.x + 9} y={hole.y + 3}>
+                            {hole.id}
+                          </text>
+                        </g>
+                      ))
+                    : null}
+                  {layers.skeletons
+                    ? skeletons.map((skeleton) => (
+                        <g
+                          className={
+                            skeleton.id === selectedSkeletonId
+                              ? 'skeleton selected'
+                              : 'skeleton'
+                          }
+                          key={skeleton.id}
+                        >
+                          <line
+                            className="nose-vector"
+                            x1={skeleton.body.x}
+                            x2={skeleton.nose.x}
+                            y1={skeleton.body.y}
+                            y2={skeleton.nose.y}
+                          />
+                          <circle className="hit-area" cx={skeleton.body.x} cy={skeleton.body.y} r="13" />
+                          <circle className="body-point" cx={skeleton.body.x} cy={skeleton.body.y} r="5" />
+                          <circle className="hit-area" cx={skeleton.nose.x} cy={skeleton.nose.y} r="11" />
+                          <circle className="nose-point" cx={skeleton.nose.x} cy={skeleton.nose.y} r="4" />
+                        </g>
+                      ))
+                    : null}
+                  {layers.events
+                    ? events.map((event, index) => {
+                        const hole =
+                          holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
+                        return (
+                          <g
+                            className={`event-pin ${event.type}`}
+                            key={`${event.type}-${event.frame}-${index}`}
+                          >
+                            <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
+                          </g>
+                        );
+                      })
+                    : null}
+                </svg>
+              </div>
+
+              <div className="overlay-legend" aria-label="Overlay legend">
+                <span><i className="legend-body" /> Body point</span>
+                <span><i className="legend-nose" /> Nose proxy</span>
+                <span><i className="legend-target" /> Target well</span>
+              </div>
+            </div>
+
+            <aside className="canvas-dock canvas-dock-right" aria-label="Skeleton layers">
+              <div className="annotation-summary compact-summary">
+                <h3>Current frame</h3>
+                {selectedSkeleton ? (
+                  <>
+                    <p>Selected: {selectedSkeleton.label}</p>
+                    <p>
+                      Body: {Math.round(selectedSkeleton.body.x)}, {Math.round(selectedSkeleton.body.y)}
+                    </p>
+                    <p>
+                      Nose: {Math.round(selectedSkeleton.nose.x)}, {Math.round(selectedSkeleton.nose.y)}
+                    </p>
+                  </>
+                ) : (
+                  <p>No skeleton selected</p>
+                )}
+                <p>Events: {events.length}</p>
+              </div>
+
+              <div className="skeleton-panel">
+                <div className="skeleton-panel-heading">
+                  <h3>Mice / Skeleton</h3>
+                  <button onClick={() => addSkeleton()} type="button">
+                    Add nodes
+                  </button>
+                </div>
+                <div className="skeleton-tree">
+                  {skeletons.map((skeleton) => (
+                    <button
+                      className={skeleton.id === selectedSkeletonId ? 'active' : ''}
+                      key={skeleton.id}
+                      onClick={() => setSelectedSkeletonId(skeleton.id)}
+                      type="button"
+                    >
+                      <strong>{skeleton.label}</strong>
+                      <span>
+                        Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
+                      </span>
+                      <span>
+                        Nose {Math.round(skeleton.nose.x)}, {Math.round(skeleton.nose.y)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </aside>
           </div>
 
           <div className="frame-controls">
@@ -1128,51 +1185,6 @@ export default function Home() {
           <div className="warning-box">
             <AlertTriangle size={18} aria-hidden="true" />
             <p>{selected.caveat}</p>
-          </div>
-
-          <div className="annotation-summary">
-            <h3>Current frame annotations</h3>
-            {selectedSkeleton ? (
-              <>
-                <p>Selected: {selectedSkeleton.label}</p>
-                <p>
-                  Body: {Math.round(selectedSkeleton.body.x)}, {Math.round(selectedSkeleton.body.y)}
-                </p>
-                <p>
-                  Nose: {Math.round(selectedSkeleton.nose.x)}, {Math.round(selectedSkeleton.nose.y)}
-                </p>
-              </>
-            ) : (
-              <p>No skeleton selected</p>
-            )}
-            <p>Events: {events.length}</p>
-          </div>
-
-          <div className="skeleton-panel">
-            <div className="skeleton-panel-heading">
-              <h3>Mice / Skeleton</h3>
-              <button onClick={() => addSkeleton()} type="button">
-                Add nodes
-              </button>
-            </div>
-            <div className="skeleton-tree">
-              {skeletons.map((skeleton) => (
-                <button
-                  className={skeleton.id === selectedSkeletonId ? 'active' : ''}
-                  key={skeleton.id}
-                  onClick={() => setSelectedSkeletonId(skeleton.id)}
-                  type="button"
-                >
-                  <strong>{skeleton.label}</strong>
-                  <span>
-                    Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
-                  </span>
-                  <span>
-                    Nose {Math.round(skeleton.nose.x)}, {Math.round(skeleton.nose.y)}
-                  </span>
-                </button>
-              ))}
-            </div>
           </div>
 
           <button

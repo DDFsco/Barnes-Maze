@@ -221,7 +221,7 @@ body {
   }
 
   .tool-palette.vertical {
-    @apply mb-0 grid grid-cols-2;
+    @apply mb-0 grid grid-cols-1;
   }
 
   .tool-palette button {
@@ -250,6 +250,46 @@ body {
 
   .layer-list input {
     @apply h-4 w-4 accent-primary;
+  }
+
+  .canvas-workspace {
+    @apply relative rounded-md border border-border bg-muted/30 p-3;
+  }
+
+  .canvas-center {
+    @apply min-w-0;
+  }
+
+  .canvas-dock {
+    @apply absolute top-6 z-10 max-h-[calc(100%-3rem)] overflow-auto rounded-md border border-border bg-card/90 p-2 shadow-md backdrop-blur;
+  }
+
+  .canvas-dock-left {
+    @apply left-6 w-32;
+  }
+
+  .canvas-dock-right {
+    @apply right-6 w-52;
+  }
+
+  .canvas-dock h3 {
+    @apply mb-2 text-xs font-semibold uppercase text-muted-foreground;
+  }
+
+  .dock-section + .dock-section {
+    @apply mt-2 border-t border-border pt-2;
+  }
+
+  .canvas-dock .tool-palette button {
+    @apply min-h-8 px-2 text-xs;
+  }
+
+  .canvas-dock .layer-list label {
+    @apply min-h-7 px-2 text-xs;
+  }
+
+  .canvas-dock .layer-list {
+    @apply p-1;
   }
 
   .video-stage {
@@ -491,6 +531,10 @@ body {
     @apply mt-4 rounded-md border border-border bg-background p-3 text-sm;
   }
 
+  .compact-summary {
+    @apply mt-0;
+  }
+
   .quality-box div {
     @apply mb-2 flex items-center gap-2;
   }
@@ -523,6 +567,15 @@ body {
 
   .skeleton-panel {
     @apply mt-4 rounded-md border border-border bg-background p-3 text-sm;
+  }
+
+  .canvas-dock .skeleton-panel {
+    @apply mt-3;
+  }
+
+  .canvas-dock .annotation-summary,
+  .canvas-dock .skeleton-panel {
+    @apply p-2 text-xs;
   }
 
   .skeleton-panel-heading {

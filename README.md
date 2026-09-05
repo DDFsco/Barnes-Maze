@@ -55,7 +55,7 @@ npm run dev
 3. To load a real local video, click `Load video` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
 4. Review the platform boundary, hole markers, target hole, and the preset body/nose skeleton over the frame/video.
 5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
-6. Use the left-side tool and layer panels like a drawing app:
+6. Use the tool and layer docks directly beside the video, like a drawing app:
    - Layer checkboxes show or hide Platform boundary, Wells, Mice / Skeleton, and Events.
    - `Add nodes`: click the video overlay to create another mouse skeleton with body and nose nodes.
    - `Select`: click near an existing skeleton to select and drag that body/nose pair together.
@@ -66,7 +66,7 @@ npm run dev
    - `Nose`: click or drag the selected skeleton's nose-proxy point for the current frame.
    - `Visit`: click near a well to add a manual investigation event.
    - `Escape`: click near a well to add a manual escape event.
-7. Use the right-side `Mice / Skeleton` panel to select each mouse and inspect its body/nose coordinates.
+7. Use the video workspace's right dock, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
 8. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
 9. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
 10. Click `Download CSV` for the trial summary.
