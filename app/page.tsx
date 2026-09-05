@@ -70,6 +70,14 @@ type FrameAnalysis = {
   nose?: Point;
 };
 
+type TrackingRun = {
+  status: 'idle' | 'running' | 'done' | 'error';
+  processed: number;
+  total: number;
+  saved: number;
+  message: string;
+};
+
 type LayerVisibility = {
   maze: boolean;
   wells: boolean;
@@ -216,6 +224,14 @@ const initialAnalysis: FrameAnalysis = {
   componentPixels: 0,
 };
 
+const initialTrackingRun: TrackingRun = {
+  status: 'idle',
+  processed: 0,
+  total: 0,
+  saved: 0,
+  message: 'No tracking pass run yet',
+};
+
 function formatSeconds(value: number) {
   const safeValue = Number.isFinite(value) ? value : 0;
   const minutes = Math.floor(safeValue / 60);
@@ -266,6 +282,7 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const frameImageRef = useRef<HTMLImageElement | null>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stopTrackingRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState(samples[0].id);
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
@@ -296,6 +313,7 @@ export default function Home() {
     events: true,
   });
   const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis>(initialAnalysis);
+  const [trackingRun, setTrackingRun] = useState<TrackingRun>(initialTrackingRun);
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
 
@@ -405,6 +423,7 @@ export default function Home() {
                 frameTouched: frameAnnotation.touched,
               },
               frameAnalysis,
+              trackingRun,
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -447,6 +466,7 @@ export default function Home() {
     targetHole,
     frameAnnotation.touched,
     frameAnalysis,
+    trackingRun,
   ]);
 
   function selectSample(sample: SampleVideo) {
@@ -461,6 +481,7 @@ export default function Home() {
     setCurrentTime(0);
     setToolMode('select');
     setFrameAnalysis(initialAnalysis);
+    setTrackingRun(initialTrackingRun);
   }
 
   function loadVideo(file: File) {
@@ -476,6 +497,7 @@ export default function Home() {
     setCurrentTime(0);
     setIsPlaying(false);
     setFrameAnalysis({ ...initialAnalysis, source: 'video' });
+    setTrackingRun(initialTrackingRun);
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }
 
@@ -791,58 +813,192 @@ export default function Home() {
     };
   }
 
-  function analyzeCurrentFrame() {
+  function readRenderedFrameAnalysis(source: CanvasImageSource) {
     const canvas = analysisCanvasRef.current;
     const context = canvas?.getContext('2d', { willReadFrequently: true });
-    if (!canvas || !context) {
-      setFrameAnalysis({
-        ...initialAnalysis,
-        status: 'error',
-        message: 'Frame canvas is not available',
-        source: uploadedVideo ? 'video' : 'sample',
-      });
-      return;
-    }
+    if (!canvas || !context) throw new Error('Frame canvas is not available');
 
     canvas.width = 640;
     canvas.height = 480;
     context.clearRect(0, 0, 640, 480);
+    context.drawImage(source, 0, 0, 640, 480);
+    return analyzeImageData(context.getImageData(0, 0, 640, 480));
+  }
+
+  function writeAnalysisToCurrentFrame(result: FrameAnalysis) {
+    if (result.status !== 'ready' || !result.body || !result.nose) return;
+    const nextId = selectedSkeleton?.id ?? 1;
+    updateFrameAnnotation((annotation) => {
+      const nextSkeleton = {
+        id: nextId,
+        label: `Mouse ${nextId}`,
+        body: result.body as Point,
+        nose: result.nose as Point,
+      };
+      const hasSkeleton = annotation.skeletons.some((skeleton) => skeleton.id === nextId);
+      return {
+        ...annotation,
+        skeletons: hasSkeleton
+          ? annotation.skeletons.map((skeleton) =>
+              skeleton.id === nextId ? nextSkeleton : skeleton,
+            )
+          : [...annotation.skeletons, nextSkeleton],
+        selectedSkeletonId: nextId,
+      };
+    });
+    setLayers((current) => ({ ...current, skeletons: true }));
+    setCorrections((value) => value + 1);
+  }
+
+  function analyzeCurrentFrame() {
     const source = uploadedVideo ? videoRef.current : frameImageRef.current;
 
     try {
       if (!source) throw new Error('Frame source is not available');
-      context.drawImage(source, 0, 0, 640, 480);
-      const result = analyzeImageData(context.getImageData(0, 0, 640, 480));
+      const result = readRenderedFrameAnalysis(source);
       setFrameAnalysis(result);
-      if (result.status === 'ready' && result.body && result.nose) {
-        const nextId = selectedSkeleton?.id ?? 1;
-        updateFrameAnnotation((annotation) => {
-          const nextSkeleton = {
-            id: nextId,
-            label: `Mouse ${nextId}`,
-            body: result.body as Point,
-            nose: result.nose as Point,
-          };
-          const hasSkeleton = annotation.skeletons.some((skeleton) => skeleton.id === nextId);
-          return {
-            ...annotation,
-            skeletons: hasSkeleton
-              ? annotation.skeletons.map((skeleton) =>
-                  skeleton.id === nextId ? nextSkeleton : skeleton,
-                )
-              : [...annotation.skeletons, nextSkeleton],
-            selectedSkeletonId: nextId,
-          };
-        });
-        setLayers((current) => ({ ...current, skeletons: true }));
-        setCorrections((value) => value + 1);
-      }
+      writeAnalysisToCurrentFrame(result);
     } catch (error) {
       setFrameAnalysis({
         ...initialAnalysis,
         status: 'error',
         message: error instanceof Error ? error.message : 'Unable to read current frame',
         source: uploadedVideo ? 'video' : 'sample',
+      });
+    }
+  }
+
+  function waitForVideoSeek(video: HTMLVideoElement, time: number) {
+    return new Promise<void>((resolve, reject) => {
+      if (Math.abs(video.currentTime - time) < 0.0001) {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Video seek timed out'));
+      }, 2500);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        video.removeEventListener('seeked', handleSeeked);
+        video.removeEventListener('error', handleError);
+      };
+      const handleSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error('Video seek failed'));
+      };
+      video.addEventListener('seeked', handleSeeked, { once: true });
+      video.addEventListener('error', handleError, { once: true });
+      video.currentTime = time;
+    });
+  }
+
+  function stopTracking() {
+    stopTrackingRef.current = true;
+    setTrackingRun((current) => ({
+      ...current,
+      status: current.status === 'running' ? 'done' : current.status,
+      message: current.status === 'running' ? 'Tracking stopped by user' : current.message,
+    }));
+  }
+
+  async function trackNextFrames() {
+    const video = videoRef.current;
+    if (!uploadedVideo || !video) {
+      setTrackingRun({
+        status: 'error',
+        processed: 0,
+        total: 0,
+        saved: 0,
+        message: 'Load a local MP4 before running multi-frame tracking',
+      });
+      return;
+    }
+
+    stopTrackingRef.current = false;
+    video.pause();
+    setIsPlaying(false);
+    const startFrame = currentFrame;
+    const framesToTrack = Math.min(60, totalFrames - startFrame);
+    const trackedFrames: Record<string, FrameAnnotation> = {};
+    let processed = 0;
+    let saved = 0;
+
+    setTrackingRun({
+      status: 'running',
+      processed: 0,
+      total: framesToTrack,
+      saved: 0,
+      message: `Tracking frames ${startFrame + 1}-${startFrame + framesToTrack}`,
+    });
+
+    try {
+      for (let offset = 0; offset < framesToTrack; offset += 1) {
+        if (stopTrackingRef.current) break;
+        const frame = startFrame + offset;
+        const time = frame / fps;
+        await waitForVideoSeek(video, time);
+        processed = offset + 1;
+        const result = readRenderedFrameAnalysis(video);
+        if (result.status === 'ready' && result.body && result.nose) {
+          const skeletonId = selectedSkeletonId || 1;
+          trackedFrames[String(frame)] = {
+            skeletons: [
+              {
+                id: skeletonId,
+                label: `Mouse ${skeletonId}`,
+                body: result.body,
+                nose: result.nose,
+              },
+            ],
+            selectedSkeletonId: skeletonId,
+            events: [],
+            touched: true,
+          };
+          saved += 1;
+          setFrameAnalysis(result);
+        }
+        if (offset % 5 === 0 || offset === framesToTrack - 1) {
+          setCurrentTime(time);
+          setTrackingRun({
+            status: 'running',
+            processed,
+            total: framesToTrack,
+            saved,
+            message: `Tracking frame ${frame + 1}`,
+          });
+        }
+      }
+
+      setAnnotationStore((current) => ({
+        ...current,
+        [activeVideoKey]: {
+          ...current[activeVideoKey],
+          ...trackedFrames,
+        },
+      }));
+      setLayers((current) => ({ ...current, skeletons: true }));
+      setCorrections((value) => value + saved);
+      setTrackingRun({
+        status: 'done',
+        processed,
+        total: framesToTrack,
+        saved,
+        message: stopTrackingRef.current
+          ? `Stopped after saving ${saved} frames`
+          : `Saved ${saved} draft frame annotations`,
+      });
+    } catch (error) {
+      setTrackingRun({
+        status: 'error',
+        processed,
+        total: framesToTrack,
+        saved,
+        message: error instanceof Error ? error.message : 'Tracking pass failed',
       });
     }
   }
@@ -1017,6 +1173,7 @@ export default function Home() {
         correctionCount: corrections,
       },
       frameAnalysis,
+      trackingRun,
       thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
       source: 'BarnesAI annotation surface state',
     },
@@ -1326,6 +1483,22 @@ export default function Home() {
                 <button className="analysis-button" onClick={analyzeCurrentFrame} type="button">
                   Analyze frame
                 </button>
+                <div className="tracking-actions">
+                  <button
+                    disabled={!uploadedVideo || trackingRun.status === 'running'}
+                    onClick={trackNextFrames}
+                    type="button"
+                  >
+                    Track next 60
+                  </button>
+                  <button
+                    disabled={trackingRun.status !== 'running'}
+                    onClick={stopTracking}
+                    type="button"
+                  >
+                    Stop
+                  </button>
+                </div>
                 <div className={`analysis-readout ${frameAnalysis.status}`}>
                   <strong>
                     {frameAnalysis.status === 'ready'
@@ -1341,6 +1514,18 @@ export default function Home() {
                       {frameAnalysis.darkPixels} px
                     </span>
                   ) : null}
+                </div>
+                <div className={`tracking-readout ${trackingRun.status}`}>
+                  <strong>
+                    {trackingRun.status === 'running'
+                      ? `${trackingRun.processed} / ${trackingRun.total} frames`
+                      : trackingRun.status === 'done'
+                        ? `${trackingRun.saved} frames saved`
+                        : trackingRun.status === 'error'
+                          ? 'Tracking needs review'
+                          : 'Tracking idle'}
+                  </strong>
+                  <span>{trackingRun.message}</span>
                 </div>
               </div>
 

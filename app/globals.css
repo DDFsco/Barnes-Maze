@@ -613,7 +613,23 @@ body {
     @apply mt-2 inline-flex min-h-8 w-full items-center justify-center rounded-md border border-primary/35 bg-primary/10 px-2 text-xs font-semibold text-primary transition hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
 
+  .tracking-actions {
+    @apply mt-2 grid grid-cols-2 gap-1;
+  }
+
+  .tracking-actions button {
+    @apply inline-flex min-h-8 min-w-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-xs font-semibold leading-tight transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .tracking-actions button:disabled {
+    @apply cursor-not-allowed opacity-45 hover:bg-card;
+  }
+
   .analysis-readout {
+    @apply mt-2 grid gap-1 rounded-md border border-border bg-muted/40 p-2 text-xs;
+  }
+
+  .tracking-readout {
     @apply mt-2 grid gap-1 rounded-md border border-border bg-muted/40 p-2 text-xs;
   }
 
@@ -621,15 +637,29 @@ body {
     @apply border-primary/25 bg-secondary/65;
   }
 
+  .tracking-readout.running {
+    @apply border-primary/35 bg-primary/5;
+  }
+
+  .tracking-readout.done {
+    @apply border-primary/25 bg-secondary/65;
+  }
+
   .analysis-readout.error {
     @apply border-destructive/30 bg-destructive/5;
   }
 
-  .analysis-readout strong {
+  .tracking-readout.error {
+    @apply border-destructive/30 bg-destructive/5;
+  }
+
+  .analysis-readout strong,
+  .tracking-readout strong {
     @apply text-foreground;
   }
 
-  .analysis-readout span {
+  .analysis-readout span,
+  .tracking-readout span {
     @apply text-muted-foreground;
   }
 
