@@ -220,12 +220,36 @@ body {
     @apply mb-3 flex flex-wrap gap-1 rounded-md border border-border bg-background p-1;
   }
 
+  .tool-palette.vertical {
+    @apply mb-0 grid grid-cols-2;
+  }
+
   .tool-palette button {
     @apply min-h-9 rounded px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
 
   .tool-palette button.active {
     @apply bg-primary text-primary-foreground;
+  }
+
+  .side-section {
+    @apply mt-5 border-t border-border pt-4;
+  }
+
+  .side-section h3 {
+    @apply mb-2 text-sm font-semibold;
+  }
+
+  .layer-list {
+    @apply rounded-md border border-border bg-background p-2;
+  }
+
+  .layer-list label {
+    @apply flex min-h-9 items-center gap-2 rounded px-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground;
+  }
+
+  .layer-list input {
+    @apply h-4 w-4 accent-primary;
   }
 
   .video-stage {
@@ -262,6 +286,7 @@ body {
 
   .annotation-mode-move-maze svg,
   .annotation-mode-move-hole svg,
+  .annotation-mode-add-nodes svg,
   .annotation-mode-body svg,
   .annotation-mode-nose svg {
     cursor: grab;
@@ -269,6 +294,7 @@ body {
 
   .annotation-mode-move-maze svg:active,
   .annotation-mode-move-hole svg:active,
+  .annotation-mode-add-nodes svg:active,
   .annotation-mode-body svg:active,
   .annotation-mode-nose svg:active {
     cursor: grabbing;
@@ -303,30 +329,30 @@ body {
     stroke-width: 2;
   }
 
-  .trajectory {
-    fill: none;
-    opacity: 0.58;
-    stroke: rgb(75 184 136 / 80%);
-    stroke-dasharray: 5 6;
-    stroke-linecap: round;
-    stroke-width: 2;
-  }
-
   .body-point {
     fill: rgb(75 184 136);
     stroke: white;
-    stroke-width: 1.5;
+    stroke-width: 1.2;
   }
 
   .nose-point {
     fill: rgb(221 84 58);
     stroke: white;
-    stroke-width: 1.5;
+    stroke-width: 1.2;
   }
 
   .nose-vector {
     stroke: rgb(221 84 58 / 82%);
     stroke-linecap: round;
+    stroke-width: 1.5;
+  }
+
+  .skeleton.selected .body-point,
+  .skeleton.selected .nose-point {
+    stroke-width: 2;
+  }
+
+  .skeleton.selected .nose-vector {
     stroke-width: 2;
   }
 
@@ -362,10 +388,6 @@ body {
 
   .overlay-legend i {
     @apply inline-block h-2.5 w-2.5 rounded-full;
-  }
-
-  .legend-path {
-    background: rgb(75 184 136 / 62%);
   }
 
   .legend-body {
@@ -497,5 +519,42 @@ body {
 
   .annotation-summary p {
     @apply text-muted-foreground;
+  }
+
+  .skeleton-panel {
+    @apply mt-4 rounded-md border border-border bg-background p-3 text-sm;
+  }
+
+  .skeleton-panel-heading {
+    @apply mb-2 flex items-center justify-between gap-2;
+  }
+
+  .skeleton-panel-heading h3 {
+    @apply font-semibold;
+  }
+
+  .skeleton-panel-heading button {
+    @apply inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs font-semibold transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .skeleton-tree {
+    @apply grid gap-2;
+  }
+
+  .skeleton-tree button {
+    @apply rounded-md border border-border bg-card p-2 text-left transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .skeleton-tree button.active {
+    @apply border-primary/60 bg-secondary;
+  }
+
+  .skeleton-tree strong,
+  .skeleton-tree span {
+    @apply block;
+  }
+
+  .skeleton-tree span {
+    @apply mt-0.5 text-xs text-muted-foreground;
   }
 }

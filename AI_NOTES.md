@@ -13,6 +13,7 @@ Agent judgment moments:
 - The first attempt to run the app exposed a Node/version/native dependency problem. Reinstalling with the bundled Node 24 fixed the missing native binding.
 - The next product increment prioritized real user input over deeper mock metrics: local MP4 loading, playback, timestamp scrubbing, and editable ROI controls now exist before any CV tracking claims are made.
 - The annotation model now treats the video window as a shared underlay/overlay surface. Wells are fixed trial ROIs that can be translated, scaled, rotated, and moved individually, while body/nose points and event pins are frame-linked correction records.
+- The overlay interaction was reshaped toward drawing-software conventions: tools and layer visibility live beside the video, skeletons are listed as editable body/nose node groups, and the draft path preview was removed to avoid implying validated tracking.
 
 Checks performed:
 

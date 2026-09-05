@@ -21,6 +21,7 @@ type Point = { x: number; y: number };
 type Platform = Point & { r: number };
 type ToolMode =
   | 'select'
+  | 'add-nodes'
   | 'move-maze'
   | 'move-hole'
   | 'target'
@@ -31,8 +32,23 @@ type ToolMode =
 type DragTarget =
   | { type: 'platform'; start: Point; origin: Platform }
   | { type: 'hole'; id: number }
-  | { type: 'body' }
-  | { type: 'nose' };
+  | { type: 'body'; skeletonId: number }
+  | { type: 'nose'; skeletonId: number }
+  | { type: 'skeleton'; skeletonId: number; start: Point; body: Point; nose: Point };
+
+type Skeleton = {
+  id: number;
+  label: string;
+  body: Point;
+  nose: Point;
+};
+
+type LayerVisibility = {
+  maze: boolean;
+  wells: boolean;
+  skeletons: boolean;
+  events: boolean;
+};
 
 type SampleVideo = {
   id: string;
@@ -144,6 +160,7 @@ const samples: SampleVideo[] = [
 
 const toolModes: Array<{ id: ToolMode; label: string }> = [
   { id: 'select', label: 'Select' },
+  { id: 'add-nodes', label: 'Add nodes' },
   { id: 'move-maze', label: 'Maze' },
   { id: 'move-hole', label: 'Hole' },
   { id: 'target', label: 'Target' },
@@ -188,6 +205,15 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function makeSkeleton(id: number, body: Point): Skeleton {
+  return {
+    id,
+    label: `Mouse ${id}`,
+    body,
+    nose: { x: body.x + 18, y: body.y - 14 },
+  };
+}
+
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -205,10 +231,15 @@ export default function Home() {
   const [holes, setHoles] = useState(() => buildHolePoints(samples[0].platform, 0.92));
   const [holeScale, setHoleScale] = useState(0.92);
   const [rotationDegrees, setRotationDegrees] = useState(0);
-  const [bodyPoint, setBodyPoint] = useState(samples[0].mouse);
-  const [nosePoint, setNosePoint] = useState<Point>({
-    x: samples[0].mouse.x + 18,
-    y: samples[0].mouse.y - 14,
+  const [skeletons, setSkeletons] = useState<Skeleton[]>(() => [
+    makeSkeleton(1, samples[0].mouse),
+  ]);
+  const [selectedSkeletonId, setSelectedSkeletonId] = useState(1);
+  const [layers, setLayers] = useState<LayerVisibility>({
+    maze: true,
+    wells: true,
+    skeletons: true,
+    events: true,
   });
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
@@ -221,6 +252,8 @@ export default function Home() {
   const activeLabel = uploadedVideo?.name ?? selected.fileName;
   const totalFrames = Math.max(1, Math.round(activeDuration * fps));
   const currentFrame = clamp(Math.round(currentTime * fps), 0, totalFrames - 1);
+  const selectedSkeleton =
+    skeletons.find((skeleton) => skeleton.id === selectedSkeletonId) ?? skeletons[0];
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -294,8 +327,9 @@ export default function Home() {
               currentFrame,
               targetHole,
               thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
+              layers,
               roi: { platform, holes, holeScale, rotationDegrees },
-              corrections: { bodyPoint, nosePoint, events, count: corrections },
+              corrections: { skeletons, selectedSkeletonId, events, count: corrections },
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -321,7 +355,6 @@ export default function Home() {
   }, [
     activeLabel,
     adjustedErrors,
-    bodyPoint,
     corrections,
     currentFrame,
     distance,
@@ -329,10 +362,12 @@ export default function Home() {
     events,
     holes,
     holeScale,
-    nosePoint,
+    layers,
     platform,
     rotationDegrees,
     selected,
+    selectedSkeletonId,
+    skeletons,
     targetHole,
   ]);
 
@@ -344,8 +379,8 @@ export default function Home() {
     setHoles(nextHoles);
     setHoleScale(0.92);
     setRotationDegrees(0);
-    setBodyPoint(sample.mouse);
-    setNosePoint({ x: sample.mouse.x + 18, y: sample.mouse.y - 14 });
+    setSkeletons([makeSkeleton(1, sample.mouse)]);
+    setSelectedSkeletonId(1);
     setFps(sample.fpsValue);
     setCurrentTime(0);
     setEvents([]);
@@ -434,9 +469,34 @@ export default function Home() {
     setRotationDegrees(0);
     setHoles(buildHolePoints(selected.platform, 0.92, 0));
     setTargetHole(selected.targetHole);
-    setBodyPoint(selected.mouse);
-    setNosePoint({ x: selected.mouse.x + 18, y: selected.mouse.y - 14 });
+    setSkeletons([makeSkeleton(1, selected.mouse)]);
+    setSelectedSkeletonId(1);
     setEvents([]);
+  }
+
+  function updateSkeletonNode(
+    skeletonId: number,
+    node: 'body' | 'nose',
+    point: Point,
+  ) {
+    setSkeletons((current) =>
+      current.map((skeleton) =>
+        skeleton.id === skeletonId ? { ...skeleton, [node]: point } : skeleton,
+      ),
+    );
+  }
+
+  function addSkeleton(point = { x: 320, y: 240 }) {
+    const nextId = Math.max(0, ...skeletons.map((skeleton) => skeleton.id)) + 1;
+    const nextSkeleton = makeSkeleton(nextId, point);
+    setSkeletons((current) => [...current, nextSkeleton]);
+    setSelectedSkeletonId(nextId);
+    setLayers((current) => ({ ...current, skeletons: true }));
+    setCorrections((value) => value + 1);
+  }
+
+  function toggleLayer(layer: keyof LayerVisibility) {
+    setLayers((current) => ({ ...current, [layer]: !current[layer] }));
   }
 
   function download(text: string, fileName: string, type: string) {
@@ -465,6 +525,20 @@ export default function Home() {
     }, { hole: holes[0], distance: Infinity }).hole;
   }
 
+  function nearestSkeleton(point: Point) {
+    return skeletons.reduce<{ skeleton: Skeleton | null; distance: number }>(
+      (nearest, skeleton) => {
+        const bodyDistance = Math.hypot(skeleton.body.x - point.x, skeleton.body.y - point.y);
+        const noseDistance = Math.hypot(skeleton.nose.x - point.x, skeleton.nose.y - point.y);
+        const distanceToSkeleton = Math.min(bodyDistance, noseDistance);
+        return distanceToSkeleton < nearest.distance
+          ? { skeleton, distance: distanceToSkeleton }
+          : nearest;
+      },
+      { skeleton: null, distance: Infinity },
+    );
+  }
+
   function addEvent(type: 'investigation' | 'escape', point: Point) {
     const hole = nearestHole(point);
     setEvents((current) => [
@@ -478,6 +552,21 @@ export default function Home() {
     const point = stagePoint(event);
     event.currentTarget.setPointerCapture(event.pointerId);
 
+    if (toolMode === 'select') {
+      if (!layers.skeletons) return;
+      const nearest = nearestSkeleton(point);
+      if (nearest.skeleton && nearest.distance <= 28) {
+        setSelectedSkeletonId(nearest.skeleton.id);
+        setDragTarget({
+          type: 'skeleton',
+          skeletonId: nearest.skeleton.id,
+          start: point,
+          body: nearest.skeleton.body,
+          nose: nearest.skeleton.nose,
+        });
+      }
+      return;
+    }
     if (toolMode === 'move-maze') {
       setDragTarget({ type: 'platform', start: point, origin: platform });
       return;
@@ -491,15 +580,24 @@ export default function Home() {
       setDragTarget({ type: 'hole', id: hole.id });
       return;
     }
+    if (toolMode === 'add-nodes') {
+      addSkeleton(point);
+      setToolMode('body');
+      return;
+    }
     if (toolMode === 'body') {
-      setBodyPoint(point);
-      setDragTarget({ type: 'body' });
+      if (!selectedSkeleton) return;
+      setLayers((current) => ({ ...current, skeletons: true }));
+      updateSkeletonNode(selectedSkeleton.id, 'body', point);
+      setDragTarget({ type: 'body', skeletonId: selectedSkeleton.id });
       setCorrections((value) => value + 1);
       return;
     }
     if (toolMode === 'nose') {
-      setNosePoint(point);
-      setDragTarget({ type: 'nose' });
+      if (!selectedSkeleton) return;
+      setLayers((current) => ({ ...current, skeletons: true }));
+      updateSkeletonNode(selectedSkeleton.id, 'nose', point);
+      setDragTarget({ type: 'nose', skeletonId: selectedSkeleton.id });
       setCorrections((value) => value + 1);
       return;
     }
@@ -531,8 +629,24 @@ export default function Home() {
       );
       return;
     }
-    if (dragTarget.type === 'body') setBodyPoint(point);
-    if (dragTarget.type === 'nose') setNosePoint(point);
+    if (dragTarget.type === 'skeleton') {
+      const dx = point.x - dragTarget.start.x;
+      const dy = point.y - dragTarget.start.y;
+      setSkeletons((current) =>
+        current.map((skeleton) =>
+          skeleton.id === dragTarget.skeletonId
+            ? {
+                ...skeleton,
+                body: { x: dragTarget.body.x + dx, y: dragTarget.body.y + dy },
+                nose: { x: dragTarget.nose.x + dx, y: dragTarget.nose.y + dy },
+              }
+            : skeleton,
+        ),
+      );
+      return;
+    }
+    if (dragTarget.type === 'body') updateSkeletonNode(dragTarget.skeletonId, 'body', point);
+    if (dragTarget.type === 'nose') updateSkeletonNode(dragTarget.skeletonId, 'nose', point);
   }
 
   function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
@@ -547,11 +661,12 @@ export default function Home() {
       currentFrame,
       fps,
       targetHole,
+      layers,
       roi: { platform, holes },
       holeTemplate: { scale: holeScale, rotationDegrees },
-      correctionLayer: { bodyPoint, nosePoint, events, correctionCount: corrections },
+      correctionLayer: { skeletons, selectedSkeletonId, events, correctionCount: corrections },
       thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
-      source: 'BarnesAI annotation surface demo state',
+      source: 'BarnesAI annotation surface state',
     },
     null,
     2,
@@ -604,7 +719,7 @@ export default function Home() {
         <aside className="panel order-2 xl:order-1">
           <div className="panel-heading">
             <h2>Session</h2>
-            <span>{uploadedVideo ? 'local video loaded' : '3 demo videos'}</span>
+            <span>{uploadedVideo ? 'local video loaded' : '3 sample videos'}</span>
           </div>
           {uploadedVideo ? (
             <button
@@ -657,6 +772,43 @@ export default function Home() {
               </div>
             ))}
           </div>
+
+          <div className="side-section">
+            <h3>Tools</h3>
+            <div className="tool-palette vertical" aria-label="Annotation tools">
+              {toolModes.map((tool) => (
+                <button
+                  className={toolMode === tool.id ? 'active' : ''}
+                  key={tool.id}
+                  onClick={() => setToolMode(tool.id)}
+                  type="button"
+                >
+                  {tool.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="side-section">
+            <h3>Layers</h3>
+            <div className="layer-list">
+              {([
+                ['maze', 'Platform boundary'],
+                ['wells', 'Wells'],
+                ['skeletons', 'Mice / Skeleton'],
+                ['events', 'Events'],
+              ] as Array<[keyof LayerVisibility, string]>).map(([layer, label]) => (
+                <label key={layer}>
+                  <input
+                    checked={layers[layer]}
+                    onChange={() => toggleLayer(layer)}
+                    type="checkbox"
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </aside>
 
         <section className="panel order-1 overflow-hidden xl:order-2">
@@ -685,19 +837,6 @@ export default function Home() {
                 <FileJson size={16} />
               </button>
             </div>
-          </div>
-
-          <div className="tool-palette" aria-label="Annotation tools">
-            {toolModes.map((tool) => (
-              <button
-                className={toolMode === tool.id ? 'active' : ''}
-                key={tool.id}
-                onClick={() => setToolMode(tool.id)}
-                type="button"
-              >
-                {tool.label}
-              </button>
-            ))}
           </div>
 
           <div className={`video-stage annotation-mode-${toolMode}`} ref={stageRef}>
@@ -738,60 +877,71 @@ export default function Home() {
               onPointerUp={handlePointerUp}
               viewBox="0 0 640 480"
             >
-              <circle
-                className="platform-ring"
-                cx={platform.x}
-                cy={platform.y}
-                r={platform.r}
-              />
-              <circle className="platform-handle" cx={platform.x} cy={platform.y} r="7" />
-              {holes.map((hole) => (
-                <g className="hole-group" key={hole.id}>
+              {layers.maze ? (
+                <>
                   <circle
-                    className="hit-area"
-                    cx={hole.x}
-                    cy={hole.y}
-                    r="14"
+                    className="platform-ring"
+                    cx={platform.x}
+                    cy={platform.y}
+                    r={platform.r}
                   />
-                  <circle
-                    className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
-                    cx={hole.x}
-                    cy={hole.y}
-                    r="7"
-                  />
-                  <text x={hole.x + 9} y={hole.y + 3}>
-                    {hole.id}
-                  </text>
-                </g>
-              ))}
-              <path
-                className="trajectory"
-                d={`M ${platform.x} ${platform.y} C ${platform.x - 80} ${platform.y + 40}, ${bodyPoint.x - 60} ${bodyPoint.y - 20}, ${bodyPoint.x} ${bodyPoint.y}`}
-              />
-              <line
-                className="nose-vector"
-                x1={bodyPoint.x}
-                x2={nosePoint.x}
-                y1={bodyPoint.y}
-                y2={nosePoint.y}
-              />
-              <circle className="hit-area" cx={bodyPoint.x} cy={bodyPoint.y} r="13" />
-              <circle className="body-point" cx={bodyPoint.x} cy={bodyPoint.y} r="5" />
-              <circle className="hit-area" cx={nosePoint.x} cy={nosePoint.y} r="11" />
-              <circle className="nose-point" cx={nosePoint.x} cy={nosePoint.y} r="4" />
-              {events.map((event, index) => {
-                const hole = holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
-                return (
-                  <g className={`event-pin ${event.type}`} key={`${event.type}-${event.frame}-${index}`}>
-                    <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
-                  </g>
-                );
-              })}
+                  <circle className="platform-handle" cx={platform.x} cy={platform.y} r="5" />
+                </>
+              ) : null}
+              {layers.wells
+                ? holes.map((hole) => (
+                    <g className="hole-group" key={hole.id}>
+                      <circle className="hit-area" cx={hole.x} cy={hole.y} r="14" />
+                      <circle
+                        className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
+                        cx={hole.x}
+                        cy={hole.y}
+                        r="7"
+                      />
+                      <text x={hole.x + 9} y={hole.y + 3}>
+                        {hole.id}
+                      </text>
+                    </g>
+                  ))
+                : null}
+              {layers.skeletons
+                ? skeletons.map((skeleton) => (
+                    <g
+                      className={
+                        skeleton.id === selectedSkeletonId
+                          ? 'skeleton selected'
+                          : 'skeleton'
+                      }
+                      key={skeleton.id}
+                    >
+                      <line
+                        className="nose-vector"
+                        x1={skeleton.body.x}
+                        x2={skeleton.nose.x}
+                        y1={skeleton.body.y}
+                        y2={skeleton.nose.y}
+                      />
+                      <circle className="hit-area" cx={skeleton.body.x} cy={skeleton.body.y} r="13" />
+                      <circle className="body-point" cx={skeleton.body.x} cy={skeleton.body.y} r="5" />
+                      <circle className="hit-area" cx={skeleton.nose.x} cy={skeleton.nose.y} r="11" />
+                      <circle className="nose-point" cx={skeleton.nose.x} cy={skeleton.nose.y} r="4" />
+                    </g>
+                  ))
+                : null}
+              {layers.events
+                ? events.map((event, index) => {
+                    const hole = holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
+                    return (
+                      <g className={`event-pin ${event.type}`} key={`${event.type}-${event.frame}-${index}`}>
+                        <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
+                      </g>
+                    );
+                  })
+                : null}
             </svg>
           </div>
 
           <div className="overlay-legend" aria-label="Overlay legend">
-            <span><i className="legend-path" /> Draft path</span>
             <span><i className="legend-body" /> Body point</span>
             <span><i className="legend-nose" /> Nose proxy</span>
             <span><i className="legend-target" /> Target well</span>
@@ -982,10 +1132,47 @@ export default function Home() {
 
           <div className="annotation-summary">
             <h3>Current frame annotations</h3>
-            <p>Body: {Math.round(bodyPoint.x)}, {Math.round(bodyPoint.y)}</p>
-            <p>Nose: {Math.round(nosePoint.x)}, {Math.round(nosePoint.y)}</p>
+            {selectedSkeleton ? (
+              <>
+                <p>Selected: {selectedSkeleton.label}</p>
+                <p>
+                  Body: {Math.round(selectedSkeleton.body.x)}, {Math.round(selectedSkeleton.body.y)}
+                </p>
+                <p>
+                  Nose: {Math.round(selectedSkeleton.nose.x)}, {Math.round(selectedSkeleton.nose.y)}
+                </p>
+              </>
+            ) : (
+              <p>No skeleton selected</p>
+            )}
             <p>Events: {events.length}</p>
-            <p>Green dashed line: draft path preview</p>
+          </div>
+
+          <div className="skeleton-panel">
+            <div className="skeleton-panel-heading">
+              <h3>Mice / Skeleton</h3>
+              <button onClick={() => addSkeleton()} type="button">
+                Add nodes
+              </button>
+            </div>
+            <div className="skeleton-tree">
+              {skeletons.map((skeleton) => (
+                <button
+                  className={skeleton.id === selectedSkeletonId ? 'active' : ''}
+                  key={skeleton.id}
+                  onClick={() => setSelectedSkeletonId(skeleton.id)}
+                  type="button"
+                >
+                  <strong>{skeleton.label}</strong>
+                  <span>
+                    Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
+                  </span>
+                  <span>
+                    Nose {Math.round(skeleton.nose.x)}, {Math.round(skeleton.nose.y)}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <button

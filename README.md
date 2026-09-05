@@ -51,26 +51,30 @@ npm run dev
 ## How to Operate
 
 1. Open the app.
-2. To use the built-in demo state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the left session list.
-3. To load a real local video, click `Load videos` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
-4. Review the platform boundary, hole markers, target hole, body point, trajectory, and nose-proxy vector over the frame/video.
+2. To use the built-in sample state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the left session list.
+3. To load a real local video, click `Load video` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
+4. Review the platform boundary, hole markers, target hole, and the preset body/nose skeleton over the frame/video.
 5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
-6. Choose an annotation tool:
+6. Use the left-side tool and layer panels like a drawing app:
+   - Layer checkboxes show or hide Platform boundary, Wells, Mice / Skeleton, and Events.
+   - `Add nodes`: click the video overlay to create another mouse skeleton with body and nose nodes.
+   - `Select`: click near an existing skeleton to select and drag that body/nose pair together.
    - `Maze`: drag the full platform and well map together.
    - `Hole`: drag the nearest well marker to the true hole center.
    - `Target`: click a well to mark it as the target.
-   - `Body`: click or drag the body point for the current frame.
-   - `Nose`: click or drag the nose-proxy point for the current frame.
+   - `Body`: click or drag the selected skeleton's body point for the current frame.
+   - `Nose`: click or drag the selected skeleton's nose-proxy point for the current frame.
    - `Visit`: click near a well to add a manual investigation event.
    - `Escape`: click near a well to add a manual escape event.
-7. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-8. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-9. Click `Download CSV` for the trial summary.
-10. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI and correction records.
+7. Use the right-side `Mice / Skeleton` panel to select each mouse and inspect its body/nose coordinates.
+8. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
+9. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+10. Click `Download CSV` for the trial summary.
+11. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, skeletons, and correction records.
 
 ## Design Details
 
-The product is intentionally a working surface, not a landing page. The first viewport exposes the actual workflow: session selection, video review, ROI overlay, thresholds, quality status, metrics, correction, and export.
+The product is intentionally a working surface, not a landing page. The first viewport exposes the actual workflow: session selection, video review, layer-based ROI/skeleton overlays, thresholds, quality status, metrics, correction, and export.
 
 The scientific stance is conservative:
 
@@ -82,11 +86,11 @@ The scientific stance is conservative:
 
 ## What Leaves the User's Machine
 
-In this current implementation, nothing is uploaded. The app runs in the browser, uses committed demo still frames, and creates downloadable CSV/JSON files locally. A future version that processes user-selected videos should keep frame extraction and classical CV in the browser by default.
+In this current implementation, nothing is uploaded. The app runs in the browser, uses committed sample still frames, and creates downloadable CSV/JSON files locally. A future version that processes user-selected videos should keep frame extraction and classical CV in the browser by default.
 
 ## Keys and Cost
 
-No API key is required. There are no per-run costs in the current design. If a future optional ML-backed tracker is added, it must have a local/demo fallback and a documented cost estimate.
+No API key is required. There are no per-run costs in the current design. If a future optional ML-backed tracker is added, it must have a local/sample fallback and a documented cost estimate.
 
 ## Development Checks
 
@@ -97,4 +101,4 @@ npm run build
 
 ## Known Submission Gaps
 
-This is not yet a complete take-home submission. The next implementation steps are canvas frame extraction, automatic platform/hole registration, browser CV tracking, persistent frame-level correction records, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and demo video.
+This is not yet a complete take-home submission. The next implementation steps are canvas frame extraction, automatic platform/hole registration, browser CV tracking, persistent frame-level correction records, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and walkthrough video.
