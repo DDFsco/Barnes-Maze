@@ -642,6 +642,10 @@ body {
     @apply cursor-not-allowed opacity-45 hover:bg-card;
   }
 
+  .skeleton-clear-button {
+    @apply w-full;
+  }
+
   .skeleton-tree {
     @apply grid gap-2;
   }

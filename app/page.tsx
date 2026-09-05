@@ -43,6 +43,22 @@ type Skeleton = {
   nose: Point;
 };
 
+type AnnotationEvent = {
+  type: 'investigation' | 'escape';
+  frame: number;
+  hole: number;
+  source: 'manual';
+};
+
+type FrameAnnotation = {
+  skeletons: Skeleton[];
+  selectedSkeletonId: number;
+  events: AnnotationEvent[];
+  touched: boolean;
+};
+
+type AnnotationStore = Record<string, Record<string, FrameAnnotation>>;
+
 type LayerVisibility = {
   maze: boolean;
   wells: boolean;
@@ -178,6 +194,8 @@ const statuses = [
   { name: 'Export', value: 'ready', tone: 'good' },
 ];
 
+const annotationStorageKey = 'barnesai.frameAnnotations.v1';
+
 function formatSeconds(value: number) {
   const safeValue = Number.isFinite(value) ? value : 0;
   const minutes = Math.floor(safeValue / 60);
@@ -214,6 +232,15 @@ function makeSkeleton(id: number, body: Point): Skeleton {
   };
 }
 
+function makeFrameAnnotation(body: Point): FrameAnnotation {
+  return {
+    skeletons: [makeSkeleton(1, body)],
+    selectedSkeletonId: 1,
+    events: [],
+    touched: false,
+  };
+}
+
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -231,10 +258,15 @@ export default function Home() {
   const [holes, setHoles] = useState(() => buildHolePoints(samples[0].platform, 0.92));
   const [holeScale, setHoleScale] = useState(0.92);
   const [rotationDegrees, setRotationDegrees] = useState(0);
-  const [skeletons, setSkeletons] = useState<Skeleton[]>(() => [
-    makeSkeleton(1, samples[0].mouse),
-  ]);
-  const [selectedSkeletonId, setSelectedSkeletonId] = useState(1);
+  const [annotationStore, setAnnotationStore] = useState<AnnotationStore>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const stored = window.localStorage.getItem(annotationStorageKey);
+      return stored ? (JSON.parse(stored) as AnnotationStore) : {};
+    } catch {
+      return {};
+    }
+  });
   const [layers, setLayers] = useState<LayerVisibility>({
     maze: true,
     wells: true,
@@ -243,17 +275,24 @@ export default function Home() {
   });
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
-  const [events, setEvents] = useState<
-    Array<{ type: 'investigation' | 'escape'; frame: number; hole: number; source: 'manual' }>
-  >([]);
 
   const selected = samples.find((sample) => sample.id === selectedId) ?? samples[0];
   const activeDuration = uploadedVideo?.durationSeconds || selected.durationSeconds;
   const activeLabel = uploadedVideo?.name ?? selected.fileName;
+  const activeVideoKey = uploadedVideo ? `local:${uploadedVideo.name}` : selected.id;
   const totalFrames = Math.max(1, Math.round(activeDuration * fps));
   const currentFrame = clamp(Math.round(currentTime * fps), 0, totalFrames - 1);
+  const frameKey = String(currentFrame);
+  const frameAnnotation =
+    annotationStore[activeVideoKey]?.[frameKey] ?? makeFrameAnnotation(selected.mouse);
+  const skeletons = frameAnnotation.skeletons;
+  const selectedSkeletonId = frameAnnotation.selectedSkeletonId;
+  const events = frameAnnotation.events;
   const selectedSkeleton =
     skeletons.find((skeleton) => skeleton.id === selectedSkeletonId) ?? skeletons[0];
+  const savedFrameCount = Object.values(annotationStore[activeVideoKey] ?? {}).filter(
+    (annotation) => annotation.touched,
+  ).length;
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -303,6 +342,11 @@ export default function Home() {
   }, [uploadedVideo?.url]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(annotationStorageKey, JSON.stringify(annotationStore));
+  }, [annotationStore]);
+
+  useEffect(() => {
     const modelContext = document.modelContext;
     if (!modelContext?.registerTool) return;
 
@@ -329,7 +373,14 @@ export default function Home() {
               thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
               layers,
               roi: { platform, holes, holeScale, rotationDegrees },
-              corrections: { skeletons, selectedSkeletonId, events, count: corrections },
+              corrections: {
+                skeletons,
+                selectedSkeletonId,
+                events,
+                count: corrections,
+                savedFrameCount,
+                frameTouched: frameAnnotation.touched,
+              },
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -368,7 +419,9 @@ export default function Home() {
     selected,
     selectedSkeletonId,
     skeletons,
+    savedFrameCount,
     targetHole,
+    frameAnnotation.touched,
   ]);
 
   function selectSample(sample: SampleVideo) {
@@ -379,11 +432,8 @@ export default function Home() {
     setHoles(nextHoles);
     setHoleScale(0.92);
     setRotationDegrees(0);
-    setSkeletons([makeSkeleton(1, sample.mouse)]);
-    setSelectedSkeletonId(1);
     setFps(sample.fpsValue);
     setCurrentTime(0);
-    setEvents([]);
     setToolMode('select');
   }
 
@@ -399,7 +449,6 @@ export default function Home() {
     });
     setCurrentTime(0);
     setIsPlaying(false);
-    setEvents([]);
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }
 
@@ -469,9 +518,30 @@ export default function Home() {
     setRotationDegrees(0);
     setHoles(buildHolePoints(selected.platform, 0.92, 0));
     setTargetHole(selected.targetHole);
-    setSkeletons([makeSkeleton(1, selected.mouse)]);
-    setSelectedSkeletonId(1);
-    setEvents([]);
+    setAnnotationStore((current) => {
+      const next = { ...current };
+      delete next[activeVideoKey];
+      return next;
+    });
+  }
+
+  function updateFrameAnnotation(updater: (annotation: FrameAnnotation) => FrameAnnotation) {
+    setAnnotationStore((current) => {
+      const currentVideoAnnotations = current[activeVideoKey] ?? {};
+      const baseAnnotation = currentVideoAnnotations[frameKey] ?? makeFrameAnnotation(selected.mouse);
+      const nextAnnotation = updater(baseAnnotation);
+      return {
+        ...current,
+        [activeVideoKey]: {
+          ...currentVideoAnnotations,
+          [frameKey]: { ...nextAnnotation, touched: true },
+        },
+      };
+    });
+  }
+
+  function selectSkeleton(skeletonId: number) {
+    updateFrameAnnotation((annotation) => ({ ...annotation, selectedSkeletonId: skeletonId }));
   }
 
   function updateSkeletonNode(
@@ -479,18 +549,33 @@ export default function Home() {
     node: 'body' | 'nose',
     point: Point,
   ) {
-    setSkeletons((current) =>
-      current.map((skeleton) =>
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      skeletons: annotation.skeletons.map((skeleton) =>
         skeleton.id === skeletonId ? { ...skeleton, [node]: point } : skeleton,
       ),
-    );
+      selectedSkeletonId: skeletonId,
+    }));
+  }
+
+  function updateSkeletonPair(skeletonId: number, body: Point, nose: Point) {
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      skeletons: annotation.skeletons.map((skeleton) =>
+        skeleton.id === skeletonId ? { ...skeleton, body, nose } : skeleton,
+      ),
+      selectedSkeletonId: skeletonId,
+    }));
   }
 
   function addSkeleton(point = { x: 320, y: 240 }) {
     const nextId = Math.max(0, ...skeletons.map((skeleton) => skeleton.id)) + 1;
     const nextSkeleton = makeSkeleton(nextId, point);
-    setSkeletons((current) => [...current, nextSkeleton]);
-    setSelectedSkeletonId(nextId);
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      skeletons: [...annotation.skeletons, nextSkeleton],
+      selectedSkeletonId: nextId,
+    }));
     setLayers((current) => ({ ...current, skeletons: true }));
     setCorrections((value) => value + 1);
   }
@@ -498,8 +583,26 @@ export default function Home() {
   function removeSelectedSkeleton() {
     if (!selectedSkeleton) return;
     const nextSkeletons = skeletons.filter((skeleton) => skeleton.id !== selectedSkeleton.id);
-    setSkeletons(nextSkeletons);
-    setSelectedSkeletonId(nextSkeletons[0]?.id ?? 0);
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      skeletons: nextSkeletons,
+      selectedSkeletonId: nextSkeletons[0]?.id ?? 0,
+    }));
+    setCorrections((value) => value + 1);
+  }
+
+  function saveCurrentFrame() {
+    updateFrameAnnotation((annotation) => ({ ...annotation }));
+    setCorrections((value) => value + 1);
+  }
+
+  function clearCurrentFrame() {
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      skeletons: [],
+      selectedSkeletonId: 0,
+      events: [],
+    }));
     setCorrections((value) => value + 1);
   }
 
@@ -549,10 +652,10 @@ export default function Home() {
 
   function addEvent(type: 'investigation' | 'escape', point: Point) {
     const hole = nearestHole(point);
-    setEvents((current) => [
-      ...current,
-      { type, frame: currentFrame, hole: hole.id, source: 'manual' },
-    ]);
+    updateFrameAnnotation((annotation) => ({
+      ...annotation,
+      events: [...annotation.events, { type, frame: currentFrame, hole: hole.id, source: 'manual' }],
+    }));
     setCorrections((value) => value + 1);
   }
 
@@ -564,7 +667,7 @@ export default function Home() {
       if (!layers.skeletons) return;
       const nearest = nearestSkeleton(point);
       if (nearest.skeleton && nearest.distance <= 28) {
-        setSelectedSkeletonId(nearest.skeleton.id);
+        selectSkeleton(nearest.skeleton.id);
         setDragTarget({
           type: 'skeleton',
           skeletonId: nearest.skeleton.id,
@@ -640,16 +743,10 @@ export default function Home() {
     if (dragTarget.type === 'skeleton') {
       const dx = point.x - dragTarget.start.x;
       const dy = point.y - dragTarget.start.y;
-      setSkeletons((current) =>
-        current.map((skeleton) =>
-          skeleton.id === dragTarget.skeletonId
-            ? {
-                ...skeleton,
-                body: { x: dragTarget.body.x + dx, y: dragTarget.body.y + dy },
-                nose: { x: dragTarget.nose.x + dx, y: dragTarget.nose.y + dy },
-              }
-            : skeleton,
-        ),
+      updateSkeletonPair(
+        dragTarget.skeletonId,
+        { x: dragTarget.body.x + dx, y: dragTarget.body.y + dy },
+        { x: dragTarget.nose.x + dx, y: dragTarget.nose.y + dy },
       );
       return;
     }
@@ -672,7 +769,12 @@ export default function Home() {
       layers,
       roi: { platform, holes },
       holeTemplate: { scale: holeScale, rotationDegrees },
-      correctionLayer: { skeletons, selectedSkeletonId, events, correctionCount: corrections },
+      correctionLayer: {
+        currentFrame: { skeletons, selectedSkeletonId, events, touched: frameAnnotation.touched },
+        frameAnnotations: annotationStore[activeVideoKey] ?? {},
+        savedFrameCount,
+        correctionCount: corrections,
+      },
       thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
       source: 'BarnesAI annotation surface state',
     },
@@ -737,7 +839,7 @@ export default function Home() {
               <button aria-label="Reset annotations" onClick={resetRoi} type="button">
                 <RotateCcw size={16} />
               </button>
-              <button aria-label="Save corrections" type="button">
+              <button aria-label="Save corrections" onClick={saveCurrentFrame} type="button">
                 <Save size={16} />
               </button>
               <button
@@ -973,6 +1075,8 @@ export default function Home() {
                   <p>No skeleton selected</p>
                 )}
                 <p>Events: {events.length}</p>
+                <p>Status: {frameAnnotation.touched ? 'saved manual frame' : 'preset draft'}</p>
+                <p>Saved frames: {savedFrameCount}</p>
               </div>
 
               <div className="skeleton-panel">
@@ -990,13 +1094,21 @@ export default function Home() {
                       Remove
                     </button>
                   </div>
+                  <button
+                    className="skeleton-clear-button"
+                    disabled={skeletons.length === 0 && events.length === 0}
+                    onClick={clearCurrentFrame}
+                    type="button"
+                  >
+                    Clear frame
+                  </button>
                 </div>
                 <div className="skeleton-tree">
                   {skeletons.map((skeleton) => (
                     <button
                       className={skeleton.id === selectedSkeletonId ? 'active' : ''}
                       key={skeleton.id}
-                      onClick={() => setSelectedSkeletonId(skeleton.id)}
+                      onClick={() => selectSkeleton(skeleton.id)}
                       type="button"
                     >
                       <strong>{skeleton.label}</strong>

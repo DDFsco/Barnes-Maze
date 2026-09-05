@@ -17,6 +17,7 @@ This is the first runnable P0 slice. It includes:
 - Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
 - Editable target-hole and detection-threshold controls.
 - Live ROI controls for platform center/radius, well-ring scale, well-map rotation, draggable individual wells, target selection, and mouse body/nose proxy corrections.
+- Frame-level manual annotation records for mouse skeletons and visit/escape events, persisted locally in browser storage.
 - Draft per-trial metrics and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
@@ -68,10 +69,11 @@ npm run dev
    - `Escape`: click near a well to add a manual escape event.
 7. Use the dock immediately to the right of the video window, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
 8. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
-9. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-10. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-11. Click `Download CSV` for the trial summary.
-12. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, skeletons, and correction records.
+9. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
+10. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
+11. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+12. Click `Download CSV` for the trial summary.
+13. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, and correction records.
 
 ## Design Details
 
@@ -87,7 +89,7 @@ The scientific stance is conservative:
 
 ## What Leaves the User's Machine
 
-In this current implementation, nothing is uploaded. The app runs in the browser, uses committed sample still frames, and creates downloadable CSV/JSON files locally. A future version that processes user-selected videos should keep frame extraction and classical CV in the browser by default.
+In this current implementation, nothing is uploaded. The app runs in the browser, uses committed sample still frames, stores manual per-frame corrections in local browser storage, and creates downloadable CSV/JSON files locally. A future version that processes user-selected videos should keep frame extraction and classical CV in the browser by default.
 
 ## Keys and Cost
 
@@ -102,4 +104,4 @@ npm run build
 
 ## Known Submission Gaps
 
-This is not yet a complete take-home submission. The next implementation steps are canvas frame extraction, automatic platform/hole registration, browser CV tracking, persistent frame-level correction records, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and walkthrough video.
+This is not yet a complete take-home submission. The next implementation steps are canvas frame extraction, automatic platform/hole registration, browser CV tracking, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.
