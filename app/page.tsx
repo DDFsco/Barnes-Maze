@@ -980,7 +980,7 @@ export default function Home() {
                   <h3>Mice / Skeleton</h3>
                   <div className="skeleton-panel-actions">
                     <button onClick={() => addSkeleton()} type="button">
-                      Add nodes
+                      Add
                     </button>
                     <button
                       disabled={!selectedSkeleton}

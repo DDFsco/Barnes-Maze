@@ -297,7 +297,7 @@ body {
   }
 
   .canvas-workspace {
-    @apply grid gap-3 rounded-md border border-border bg-muted/30 p-3 lg:grid-cols-[128px_minmax(0,1fr)_210px];
+    @apply grid grid-cols-[104px_minmax(0,1fr)_164px] gap-2 rounded-md border border-border bg-muted/30 p-3 sm:grid-cols-[128px_minmax(0,1fr)_210px] sm:gap-3;
   }
 
   .canvas-center {
@@ -623,7 +623,7 @@ body {
   }
 
   .skeleton-panel-heading {
-    @apply mb-2 flex items-center justify-between gap-2;
+    @apply mb-2 grid gap-2;
   }
 
   .skeleton-panel-heading h3 {
@@ -631,11 +631,11 @@ body {
   }
 
   .skeleton-panel-actions {
-    @apply flex gap-1;
+    @apply grid grid-cols-2 gap-1;
   }
 
   .skeleton-panel-heading button {
-    @apply inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs font-semibold transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+    @apply inline-flex min-h-8 min-w-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-xs font-semibold leading-tight transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
 
   .skeleton-panel-heading button:disabled {
