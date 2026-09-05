@@ -275,62 +275,68 @@ body {
   }
 
   .platform-ring {
-    fill: rgb(255 255 255 / 6%);
-    stroke: rgb(46 139 132 / 95%);
-    stroke-width: 3;
+    fill: rgb(255 255 255 / 3%);
+    stroke: rgb(46 139 132 / 85%);
+    stroke-width: 2;
   }
 
   .platform-handle {
     fill: rgb(46 139 132);
     stroke: white;
-    stroke-width: 2;
+    stroke-width: 1.5;
+  }
+
+  .hit-area {
+    fill: transparent;
+    stroke: transparent;
   }
 
   .hole-marker {
-    fill: rgb(235 188 88 / 18%);
-    stroke: rgb(235 188 88 / 92%);
-    stroke-width: 2;
+    fill: rgb(235 188 88 / 10%);
+    stroke: rgb(235 188 88 / 80%);
+    stroke-width: 1.5;
   }
 
   .target-hole {
-    fill: rgb(221 84 58 / 26%);
-    stroke: rgb(221 84 58 / 100%);
-    stroke-width: 4;
+    fill: rgb(221 84 58 / 16%);
+    stroke: rgb(221 84 58 / 90%);
+    stroke-width: 2;
   }
 
   .trajectory {
     fill: none;
-    stroke: rgb(75 184 136 / 95%);
-    stroke-dasharray: 7 6;
+    opacity: 0.58;
+    stroke: rgb(75 184 136 / 80%);
+    stroke-dasharray: 5 6;
     stroke-linecap: round;
-    stroke-width: 4;
+    stroke-width: 2;
   }
 
   .body-point {
     fill: rgb(75 184 136);
     stroke: white;
-    stroke-width: 2;
+    stroke-width: 1.5;
   }
 
   .nose-point {
     fill: rgb(221 84 58);
     stroke: white;
-    stroke-width: 2;
+    stroke-width: 1.5;
   }
 
   .nose-vector {
-    stroke: rgb(221 84 58);
+    stroke: rgb(221 84 58 / 82%);
     stroke-linecap: round;
-    stroke-width: 4;
+    stroke-width: 2;
   }
 
   .video-stage text {
     fill: white;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
     paint-order: stroke;
     stroke: rgb(0 0 0 / 65%);
-    stroke-width: 3px;
+    stroke-width: 2px;
   }
 
   .event-pin {
@@ -344,6 +350,31 @@ body {
 
   .timeline {
     @apply relative mt-4 h-4 overflow-hidden rounded bg-muted;
+  }
+
+  .overlay-legend {
+    @apply mt-3 flex flex-wrap gap-x-4 gap-y-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground;
+  }
+
+  .overlay-legend span {
+    @apply inline-flex items-center gap-1.5;
+  }
+
+  .overlay-legend i {
+    @apply inline-block h-2.5 w-2.5 rounded-full;
+  }
+
+  .legend-path {
+    background: rgb(75 184 136 / 62%);
+  }
+
+  .legend-body {
+    background: rgb(75 184 136);
+  }
+
+  .legend-nose,
+  .legend-target {
+    background: rgb(221 84 58);
   }
 
   .timeline span {

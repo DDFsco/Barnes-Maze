@@ -748,12 +748,18 @@ export default function Home() {
               {holes.map((hole) => (
                 <g className="hole-group" key={hole.id}>
                   <circle
+                    className="hit-area"
+                    cx={hole.x}
+                    cy={hole.y}
+                    r="14"
+                  />
+                  <circle
                     className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
                     cx={hole.x}
                     cy={hole.y}
-                    r={hole.radius}
+                    r="7"
                   />
-                  <text x={hole.x + 12} y={hole.y + 4}>
+                  <text x={hole.x + 9} y={hole.y + 3}>
                     {hole.id}
                   </text>
                 </g>
@@ -769,17 +775,26 @@ export default function Home() {
                 y1={bodyPoint.y}
                 y2={nosePoint.y}
               />
-              <circle className="body-point" cx={bodyPoint.x} cy={bodyPoint.y} r="9" />
-              <circle className="nose-point" cx={nosePoint.x} cy={nosePoint.y} r="7" />
+              <circle className="hit-area" cx={bodyPoint.x} cy={bodyPoint.y} r="13" />
+              <circle className="body-point" cx={bodyPoint.x} cy={bodyPoint.y} r="5" />
+              <circle className="hit-area" cx={nosePoint.x} cy={nosePoint.y} r="11" />
+              <circle className="nose-point" cx={nosePoint.x} cy={nosePoint.y} r="4" />
               {events.map((event, index) => {
                 const hole = holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
                 return (
                   <g className={`event-pin ${event.type}`} key={`${event.type}-${event.frame}-${index}`}>
-                    <Crosshair x={hole.x - 7} y={hole.y - 7} size={14} />
+                    <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
                   </g>
                 );
               })}
             </svg>
+          </div>
+
+          <div className="overlay-legend" aria-label="Overlay legend">
+            <span><i className="legend-path" /> Draft path</span>
+            <span><i className="legend-body" /> Body point</span>
+            <span><i className="legend-nose" /> Nose proxy</span>
+            <span><i className="legend-target" /> Target well</span>
           </div>
 
           <div className="frame-controls">
@@ -970,6 +985,7 @@ export default function Home() {
             <p>Body: {Math.round(bodyPoint.x)}, {Math.round(bodyPoint.y)}</p>
             <p>Nose: {Math.round(nosePoint.x)}, {Math.round(nosePoint.y)}</p>
             <p>Events: {events.length}</p>
+            <p>Green dashed line: draft path preview</p>
           </div>
 
           <button
