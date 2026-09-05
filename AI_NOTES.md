@@ -12,6 +12,7 @@ Agent judgment moments:
 - The first implementation path was kept as classical browser-side CV plus review, because the sample frames show a high-contrast dark animal on a pale platform. Nose tracking is not represented as ground truth; it is explicitly labeled as a proxy.
 - The first attempt to run the app exposed a Node/version/native dependency problem. Reinstalling with the bundled Node 24 fixed the missing native binding.
 - The next product increment prioritized real user input over deeper mock metrics: local MP4 loading, playback, timestamp scrubbing, and editable ROI controls now exist before any CV tracking claims are made.
+- The annotation model now treats the video window as a shared underlay/overlay surface. Wells are fixed trial ROIs that can be translated, scaled, rotated, and moved individually, while body/nose points and event pins are frame-linked correction records.
 
 Checks performed:
 

@@ -13,9 +13,10 @@ This is the first runnable P0 slice. It includes:
 - A static web app shell for Barnes maze analysis.
 - The three Salk sample trials represented with committed still frames.
 - Local MP4 loading through the browser file picker.
-- Native video playback and timestamp scrubbing for user-selected videos.
+- Video underlay with an interactive SVG annotation overlay.
+- Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
 - Editable target-hole and detection-threshold controls.
-- Live ROI controls for platform center, platform radius, and hole-ring radius.
+- Live ROI controls for platform center/radius, well-ring scale, well-map rotation, draggable individual wells, target selection, and mouse body/nose proxy corrections.
 - Draft per-trial metrics and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
@@ -53,13 +54,19 @@ npm run dev
 2. To use the built-in demo state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the left session list.
 3. To load a real local video, click `Load videos` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
 4. Review the platform boundary, hole markers, target hole, body point, trajectory, and nose-proxy vector over the frame/video.
-5. If a local MP4 is loaded, use the native video controls or the `Video time` scrubber to move through the trial.
-6. Change the target hole with the dropdown.
+5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
+6. Choose an annotation tool:
+   - `Maze`: drag the full platform and well map together.
+   - `Hole`: drag the nearest well marker to the true hole center.
+   - `Target`: click a well to mark it as the target.
+   - `Body`: click or drag the body point for the current frame.
+   - `Nose`: click or drag the nose-proxy point for the current frame.
+   - `Visit`: click near a well to add a manual investigation event.
+   - `Escape`: click near a well to add a manual escape event.
 7. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-8. Adjust platform X/Y, platform radius, and hole-ring scale to align the ROI overlay with the video.
-9. Click `Mark reviewed correction` to simulate an auditable human correction.
-10. Click `Download CSV` for the trial summary.
-11. Use the JSON icon above the video panel to export a reloadable project-state sketch.
+8. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+9. Click `Download CSV` for the trial summary.
+10. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI and correction records.
 
 ## Design Details
 
@@ -90,4 +97,4 @@ npm run build
 
 ## Known Submission Gaps
 
-This is not yet a complete take-home submission. The next implementation steps are real video frame extraction, automatic platform/hole registration, browser CV tracking, frame-accurate manual correction, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and demo video.
+This is not yet a complete take-home submission. The next implementation steps are canvas frame extraction, automatic platform/hole registration, browser CV tracking, persistent frame-level correction records, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, deployment, and demo video.

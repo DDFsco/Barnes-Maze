@@ -2,17 +2,37 @@
 
 import {
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
+  Crosshair,
   Download,
   FileJson,
   FolderOpen,
-  Move,
   MousePointer2,
+  Pause,
   Play,
   RotateCcw,
   Save,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+
+type Point = { x: number; y: number };
+type Platform = Point & { r: number };
+type ToolMode =
+  | 'select'
+  | 'move-maze'
+  | 'move-hole'
+  | 'target'
+  | 'body'
+  | 'nose'
+  | 'investigation'
+  | 'escape';
+type DragTarget =
+  | { type: 'platform'; start: Point; origin: Platform }
+  | { type: 'hole'; id: number }
+  | { type: 'body' }
+  | { type: 'nose' };
 
 type SampleVideo = {
   id: string;
@@ -20,10 +40,11 @@ type SampleVideo = {
   fileName: string;
   frame: string;
   frames: number;
-  fps: string;
+  fpsValue: number;
+  fpsLabel: string;
   durationSeconds: number;
-  platform: { x: number; y: number; r: number };
-  mouse: { x: number; y: number };
+  platform: Platform;
+  mouse: Point;
   targetHole: number;
   trackedPct: number;
   failureFrames: number;
@@ -53,7 +74,8 @@ const samples: SampleVideo[] = [
     fileName: 'test50.mp4',
     frame: '/sample-frames/test50.jpg',
     frames: 5539,
-    fps: '30 fps',
+    fpsValue: 30,
+    fpsLabel: '30 fps',
     durationSeconds: 185.07,
     platform: { x: 323, y: 239, r: 201 },
     mouse: { x: 332, y: 422 },
@@ -76,7 +98,8 @@ const samples: SampleVideo[] = [
     fileName: 'test51.mp4',
     frame: '/sample-frames/test51.jpg',
     frames: 741,
-    fps: '15000/1001 fps',
+    fpsValue: 15000 / 1001,
+    fpsLabel: '15000/1001 fps',
     durationSeconds: 49.38,
     platform: { x: 283, y: 242, r: 217 },
     mouse: { x: 140, y: 113 },
@@ -99,7 +122,8 @@ const samples: SampleVideo[] = [
     fileName: 'test53.mp4',
     frame: '/sample-frames/test53.jpg',
     frames: 905,
-    fps: '30 fps',
+    fpsValue: 30,
+    fpsLabel: '30 fps',
     durationSeconds: 30.23,
     platform: { x: 322, y: 239, r: 201 },
     mouse: { x: 486, y: 322 },
@@ -118,37 +142,56 @@ const samples: SampleVideo[] = [
   },
 ];
 
+const toolModes: Array<{ id: ToolMode; label: string }> = [
+  { id: 'select', label: 'Select' },
+  { id: 'move-maze', label: 'Maze' },
+  { id: 'move-hole', label: 'Hole' },
+  { id: 'target', label: 'Target' },
+  { id: 'body', label: 'Body' },
+  { id: 'nose', label: 'Nose' },
+  { id: 'investigation', label: 'Visit' },
+  { id: 'escape', label: 'Escape' },
+];
+
 const statuses = [
   { name: 'Video', value: 'loaded', tone: 'good' },
-  { name: 'Maze', value: 'auto-fit', tone: 'good' },
+  { name: 'Maze', value: 'editable', tone: 'good' },
   { name: 'Tracking', value: 'review', tone: 'warn' },
   { name: 'Events', value: 'draft', tone: 'warn' },
   { name: 'Export', value: 'ready', tone: 'good' },
 ];
 
 function formatSeconds(value: number) {
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.round(value % 60)
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = Math.round(safeValue % 60)
     .toString()
     .padStart(2, '0');
   return `${minutes}:${seconds}`;
 }
 
-function buildHolePoints(platform: SampleVideo['platform'], scale: number) {
+function buildHolePoints(platform: Platform, scale: number, rotationDegrees = 0) {
   return Array.from({ length: 20 }, (_, index) => {
-    const angle = -Math.PI / 2 + (index / 20) * Math.PI * 2;
+    const angle =
+      -Math.PI / 2 + (rotationDegrees * Math.PI) / 180 + (index / 20) * Math.PI * 2;
     const r = platform.r * scale;
     return {
       id: index + 1,
       x: platform.x + Math.cos(angle) * r,
       y: platform.y + Math.sin(angle) * r,
+      radius: 10,
     };
   });
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState(samples[0].id);
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
   const [dwell, setDwell] = useState(0.5);
@@ -156,14 +199,28 @@ export default function Home() {
   const [corrections, setCorrections] = useState(1);
   const [uploadedVideo, setUploadedVideo] = useState<UploadedVideo | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [fps, setFps] = useState(samples[0].fpsValue);
   const [platform, setPlatform] = useState(samples[0].platform);
+  const [holes, setHoles] = useState(() => buildHolePoints(samples[0].platform, 0.92));
   const [holeScale, setHoleScale] = useState(0.92);
+  const [rotationDegrees, setRotationDegrees] = useState(0);
+  const [bodyPoint, setBodyPoint] = useState(samples[0].mouse);
+  const [nosePoint, setNosePoint] = useState<Point>({
+    x: samples[0].mouse.x + 18,
+    y: samples[0].mouse.y - 14,
+  });
+  const [toolMode, setToolMode] = useState<ToolMode>('select');
+  const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
+  const [events, setEvents] = useState<
+    Array<{ type: 'investigation' | 'escape'; frame: number; hole: number; source: 'manual' }>
+  >([]);
 
   const selected = samples.find((sample) => sample.id === selectedId) ?? samples[0];
-  const holes = useMemo(() => buildHolePoints(platform, holeScale), [holeScale, platform]);
-  const activeDuration = uploadedVideo?.durationSeconds ?? selected.durationSeconds;
+  const activeDuration = uploadedVideo?.durationSeconds || selected.durationSeconds;
   const activeLabel = uploadedVideo?.name ?? selected.fileName;
-  const activeFrame = uploadedVideo ? null : selected.frame;
+  const totalFrames = Math.max(1, Math.round(activeDuration * fps));
+  const currentFrame = clamp(Math.round(currentTime * fps), 0, totalFrames - 1);
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -189,7 +246,7 @@ export default function Home() {
       ...samples.map((sample) => [
         sample.fileName,
         sample.durationSeconds.toFixed(2),
-        sample.fps,
+        sample.fpsLabel,
         sample.id === selected.id ? targetHole : sample.targetHole,
         sample.primaryLatency.toFixed(1),
         sample.totalLatency.toFixed(1),
@@ -224,7 +281,7 @@ export default function Home() {
           name: 'read_current_trial',
           title: 'Read current trial',
           description:
-            'Return the currently selected Barnes maze trial, thresholds, quality summary, and draft metrics.',
+            'Return the currently selected Barnes maze trial, thresholds, ROI, corrections, and draft metrics.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -234,13 +291,14 @@ export default function Home() {
           execute() {
             return {
               video: activeLabel,
+              currentFrame,
               targetHole,
               thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
-              roi: { platform, holeRingScale: holeScale },
+              roi: { platform, holes, holeScale, rotationDegrees },
+              corrections: { bodyPoint, nosePoint, events, count: corrections },
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
-                manualCorrections: corrections,
               },
               metrics: {
                 primaryLatencySeconds: selected.primaryLatency,
@@ -259,62 +317,21 @@ export default function Home() {
       ),
     ).catch(() => undefined);
 
-    void Promise.resolve(
-      modelContext.registerTool(
-        {
-          name: 'stage_detection_thresholds',
-          title: 'Stage detection thresholds',
-          description:
-            'Update the visible dwell-time and nose-proxy distance thresholds used for Barnes maze event detection.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              dwellSeconds: { type: 'number', minimum: 0.1, maximum: 2 },
-              noseProxyDistanceCm: { type: 'number', minimum: 0.5, maximum: 4 },
-            },
-            required: ['dwellSeconds', 'noseProxyDistanceCm'],
-            additionalProperties: false,
-          },
-          annotations: { readOnlyHint: false, untrustedContentHint: false },
-          execute(input) {
-            const value = input as {
-              dwellSeconds?: unknown;
-              noseProxyDistanceCm?: unknown;
-            };
-            if (
-              typeof value.dwellSeconds !== 'number' ||
-              typeof value.noseProxyDistanceCm !== 'number' ||
-              value.dwellSeconds < 0.1 ||
-              value.dwellSeconds > 2 ||
-              value.noseProxyDistanceCm < 0.5 ||
-              value.noseProxyDistanceCm > 4
-            ) {
-              throw new Error('Thresholds are outside the allowed range.');
-            }
-            setDwell(value.dwellSeconds);
-            setDistance(value.noseProxyDistanceCm);
-            return {
-              status: 'updated',
-              thresholds: {
-                dwellSeconds: value.dwellSeconds,
-                noseProxyDistanceCm: value.noseProxyDistanceCm,
-              },
-            };
-          },
-        },
-        { signal: lifecycle.signal },
-      ),
-    ).catch(() => undefined);
-
     return () => lifecycle.abort();
   }, [
     activeLabel,
     adjustedErrors,
+    bodyPoint,
     corrections,
+    currentFrame,
     distance,
     dwell,
+    events,
+    holes,
     holeScale,
+    nosePoint,
     platform,
+    rotationDegrees,
     selected,
     targetHole,
   ]);
@@ -323,8 +340,16 @@ export default function Home() {
     setSelectedId(sample.id);
     setTargetHole(sample.targetHole);
     setPlatform(sample.platform);
+    const nextHoles = buildHolePoints(sample.platform, 0.92, 0);
+    setHoles(nextHoles);
     setHoleScale(0.92);
+    setRotationDegrees(0);
+    setBodyPoint(sample.mouse);
+    setNosePoint({ x: sample.mouse.x + 18, y: sample.mouse.y - 14 });
+    setFps(sample.fpsValue);
     setCurrentTime(0);
+    setEvents([]);
+    setToolMode('select');
   }
 
   function loadVideo(file: File) {
@@ -338,17 +363,80 @@ export default function Home() {
       height: 480,
     });
     setCurrentTime(0);
+    setIsPlaying(false);
+    setEvents([]);
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }
 
-  function updatePlatform(key: keyof SampleVideo['platform'], value: number) {
+  function seekToFrame(frame: number) {
+    const safeFrame = clamp(frame, 0, totalFrames - 1);
+    const nextTime = safeFrame / fps;
+    setCurrentTime(nextTime);
+    if (videoRef.current) videoRef.current.currentTime = nextTime;
+  }
+
+  function stepFrame(delta: number) {
+    seekToFrame(currentFrame + delta);
+  }
+
+  function togglePlayback() {
+    const video = videoRef.current;
+    if (!video) {
+      setIsPlaying((value) => !value);
+      return;
+    }
+    if (video.paused) {
+      void video.play();
+      setIsPlaying(true);
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        stepFrame(-1);
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        stepFrame(1);
+      }
+      if (event.key === ' ') {
+        event.preventDefault();
+        togglePlayback();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  function updatePlatform(key: keyof Platform, value: number) {
+    const delta = value - platform[key];
     setPlatform((current) => ({ ...current, [key]: value }));
+    if (key === 'x') setHoles((current) => current.map((hole) => ({ ...hole, x: hole.x + delta })));
+    if (key === 'y') setHoles((current) => current.map((hole) => ({ ...hole, y: hole.y + delta })));
+    if (key === 'r') setHoles(buildHolePoints({ ...platform, r: value }, holeScale, rotationDegrees));
+  }
+
+  function updateHoleTemplate(nextScale: number, nextRotation: number) {
+    setHoleScale(nextScale);
+    setRotationDegrees(nextRotation);
+    setHoles(buildHolePoints(platform, nextScale, nextRotation));
   }
 
   function resetRoi() {
     setPlatform(selected.platform);
     setHoleScale(0.92);
+    setRotationDegrees(0);
+    setHoles(buildHolePoints(selected.platform, 0.92, 0));
     setTargetHole(selected.targetHole);
+    setBodyPoint(selected.mouse);
+    setNosePoint({ x: selected.mouse.x + 18, y: selected.mouse.y - 14 });
+    setEvents([]);
   }
 
   function download(text: string, fileName: string, type: string) {
@@ -361,6 +449,114 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
+  function stagePoint(event: React.PointerEvent<SVGSVGElement>): Point {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: clamp(((event.clientX - rect.left) / rect.width) * 640, 0, 640),
+      y: clamp(((event.clientY - rect.top) / rect.height) * 480, 0, 480),
+    };
+  }
+
+  function nearestHole(point: Point) {
+    return holes.reduce((nearest, hole) => {
+      const distanceToHole = Math.hypot(hole.x - point.x, hole.y - point.y);
+      return distanceToHole < nearest.distance ? { hole, distance: distanceToHole } : nearest;
+    }, { hole: holes[0], distance: Infinity }).hole;
+  }
+
+  function addEvent(type: 'investigation' | 'escape', point: Point) {
+    const hole = nearestHole(point);
+    setEvents((current) => [
+      ...current,
+      { type, frame: currentFrame, hole: hole.id, source: 'manual' },
+    ]);
+    setCorrections((value) => value + 1);
+  }
+
+  function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
+    const point = stagePoint(event);
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    if (toolMode === 'move-maze') {
+      setDragTarget({ type: 'platform', start: point, origin: platform });
+      return;
+    }
+    if (toolMode === 'move-hole' || toolMode === 'target') {
+      const hole = nearestHole(point);
+      if (toolMode === 'target') {
+        setTargetHole(hole.id);
+        return;
+      }
+      setDragTarget({ type: 'hole', id: hole.id });
+      return;
+    }
+    if (toolMode === 'body') {
+      setBodyPoint(point);
+      setDragTarget({ type: 'body' });
+      setCorrections((value) => value + 1);
+      return;
+    }
+    if (toolMode === 'nose') {
+      setNosePoint(point);
+      setDragTarget({ type: 'nose' });
+      setCorrections((value) => value + 1);
+      return;
+    }
+    if (toolMode === 'investigation') addEvent('investigation', point);
+    if (toolMode === 'escape') addEvent('escape', point);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    if (!dragTarget) return;
+    const point = stagePoint(event);
+    if (dragTarget.type === 'platform') {
+      const dx = point.x - dragTarget.start.x;
+      const dy = point.y - dragTarget.start.y;
+      const nextPlatform = {
+        ...dragTarget.origin,
+        x: clamp(Math.round(dragTarget.origin.x + dx), 0, 640),
+        y: clamp(Math.round(dragTarget.origin.y + dy), 0, 480),
+      };
+      setPlatform(nextPlatform);
+      setHoles((current) => current.map((hole) => ({ ...hole, x: hole.x + dx, y: hole.y + dy })));
+      setDragTarget({ type: 'platform', start: point, origin: nextPlatform });
+      return;
+    }
+    if (dragTarget.type === 'hole') {
+      setHoles((current) =>
+        current.map((hole) =>
+          hole.id === dragTarget.id ? { ...hole, x: point.x, y: point.y } : hole,
+        ),
+      );
+      return;
+    }
+    if (dragTarget.type === 'body') setBodyPoint(point);
+    if (dragTarget.type === 'nose') setNosePoint(point);
+  }
+
+  function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragTarget(null);
+  }
+
+  const projectJson = JSON.stringify(
+    {
+      video: activeLabel,
+      currentTimeSeconds: currentTime,
+      currentFrame,
+      fps,
+      targetHole,
+      roi: { platform, holes },
+      holeTemplate: { scale: holeScale, rotationDegrees },
+      correctionLayer: { bodyPoint, nosePoint, events, correctionCount: corrections },
+      thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
+      source: 'BarnesAI annotation surface demo state',
+    },
+    null,
+    2,
+  );
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card">
@@ -371,8 +567,8 @@ export default function Home() {
             </p>
             <h1 className="text-2xl font-semibold tracking-normal">BarnesAI</h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
-              Browser-first Barnes maze analysis: local videos, editable ROIs,
-              transparent tracking quality, manual correction, and paper-ready
+              Frame-based Barnes maze review: video underlay, annotation overlay,
+              editable well map, mouse correction points, and spreadsheet-ready
               exports.
             </p>
           </div>
@@ -394,11 +590,11 @@ export default function Home() {
               type="button"
             >
               <FolderOpen size={16} aria-hidden="true" />
-              Load videos
+              Load video
             </button>
-            <button className="tool-button primary" type="button">
-              <Play size={16} aria-hidden="true" />
-              Analyze demo set
+            <button className="tool-button primary" onClick={togglePlayback} type="button">
+              {isPlaying ? <Pause size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+              {isPlaying ? 'Pause' : 'Play'}
             </button>
           </div>
         </div>
@@ -433,18 +629,16 @@ export default function Home() {
             {samples.map((sample) => (
               <button
                 aria-label={`Select ${sample.fileName}`}
-                className={`video-row ${sample.id === selected.id ? 'active' : ''}`}
+                className={`video-row ${sample.id === selected.id && !uploadedVideo ? 'active' : ''}`}
                 key={sample.id}
                 onClick={() => {
+                  setUploadedVideo(null);
                   selectSample(sample);
                 }}
                 type="button"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  alt=""
-                  src={sample.frame}
-                />
+                <img alt="" src={sample.frame} />
                 <span>
                   <strong>{sample.fileName}</strong>
                   <small>
@@ -468,13 +662,14 @@ export default function Home() {
         <section className="panel order-1 overflow-hidden xl:order-2">
           <div className="panel-heading">
             <div>
-              <h2>{selected.label}</h2>
+              <h2>{uploadedVideo ? 'Local trial review' : selected.label}</h2>
               <span>
-                {activeLabel} · {uploadedVideo ? `${uploadedVideo.width}x${uploadedVideo.height}` : selected.fps} · {formatSeconds(activeDuration)}
+                {activeLabel} · frame {currentFrame + 1} / {totalFrames.toLocaleString()} ·{' '}
+                {formatSeconds(activeDuration)}
               </span>
             </div>
             <div className="icon-strip" aria-label="Video tools">
-              <button aria-label="Reset ROI" onClick={resetRoi} type="button">
+              <button aria-label="Reset annotations" onClick={resetRoi} type="button">
                 <RotateCcw size={16} />
               </button>
               <button aria-label="Save corrections" type="button">
@@ -483,23 +678,7 @@ export default function Home() {
               <button
                 aria-label="Export project JSON"
                 onClick={() =>
-                  download(
-                    JSON.stringify(
-                      {
-                        video: selected.fileName,
-                        targetHole,
-                        roi: { platform, holeRingScale: holeScale },
-                        currentTimeSeconds: currentTime,
-                        thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
-                        corrections,
-                        source: 'BarnesAI demo project state',
-                      },
-                      null,
-                      2,
-                    ),
-                    `${selected.id}-barnesai-project.json`,
-                    'application/json',
-                  )
+                  download(projectJson, `${selected.id}-barnesai-project.json`, 'application/json')
                 }
                 type="button"
               >
@@ -508,12 +687,25 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="video-stage">
+          <div className="tool-palette" aria-label="Annotation tools">
+            {toolModes.map((tool) => (
+              <button
+                className={toolMode === tool.id ? 'active' : ''}
+                key={tool.id}
+                onClick={() => setToolMode(tool.id)}
+                type="button"
+              >
+                {tool.label}
+              </button>
+            ))}
+          </div>
+
+          <div className={`video-stage annotation-mode-${toolMode}`} ref={stageRef}>
             {uploadedVideo ? (
               <video
                 aria-label={`Loaded video ${uploadedVideo.name}`}
-                controls
                 muted
+                onEnded={() => setIsPlaying(false)}
                 onLoadedMetadata={(event) => {
                   const video = event.currentTarget;
                   setUploadedVideo((current) =>
@@ -527,6 +719,8 @@ export default function Home() {
                       : current,
                   );
                 }}
+                onPause={() => setIsPlaying(false)}
+                onPlay={() => setIsPlaying(true)}
                 onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
                 ref={videoRef}
                 src={uploadedVideo.url}
@@ -534,26 +728,30 @@ export default function Home() {
             ) : (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  alt={`Representative frame from ${selected.fileName}`}
-                  src={activeFrame ?? selected.frame}
-                />
+                <img alt={`Representative frame from ${selected.fileName}`} src={selected.frame} />
               </>
             )}
-            <svg aria-hidden="true" viewBox="0 0 640 480">
+            <svg
+              aria-label="Annotation overlay"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              viewBox="0 0 640 480"
+            >
               <circle
                 className="platform-ring"
                 cx={platform.x}
                 cy={platform.y}
                 r={platform.r}
               />
+              <circle className="platform-handle" cx={platform.x} cy={platform.y} r="7" />
               {holes.map((hole) => (
-                <g key={hole.id}>
+                <g className="hole-group" key={hole.id}>
                   <circle
                     className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
                     cx={hole.x}
                     cy={hole.y}
-                    r="10"
+                    r={hole.radius}
                   />
                   <text x={hole.x + 12} y={hole.y + 4}>
                     {hole.id}
@@ -562,44 +760,81 @@ export default function Home() {
               ))}
               <path
                 className="trajectory"
-                d={`M ${platform.x} ${platform.y} C ${platform.x - 80} ${platform.y + 40}, ${selected.mouse.x - 60} ${selected.mouse.y - 20}, ${selected.mouse.x} ${selected.mouse.y}`}
+                d={`M ${platform.x} ${platform.y} C ${platform.x - 80} ${platform.y + 40}, ${bodyPoint.x - 60} ${bodyPoint.y - 20}, ${bodyPoint.x} ${bodyPoint.y}`}
               />
-              <circle className="body-point" cx={selected.mouse.x} cy={selected.mouse.y} r="9" />
               <line
                 className="nose-vector"
-                x1={selected.mouse.x}
-                y1={selected.mouse.y}
-                x2={selected.mouse.x + 18}
-                y2={selected.mouse.y - 14}
+                x1={bodyPoint.x}
+                x2={nosePoint.x}
+                y1={bodyPoint.y}
+                y2={nosePoint.y}
               />
+              <circle className="body-point" cx={bodyPoint.x} cy={bodyPoint.y} r="9" />
+              <circle className="nose-point" cx={nosePoint.x} cy={nosePoint.y} r="7" />
+              {events.map((event, index) => {
+                const hole = holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
+                return (
+                  <g className={`event-pin ${event.type}`} key={`${event.type}-${event.frame}-${index}`}>
+                    <Crosshair x={hole.x - 7} y={hole.y - 7} size={14} />
+                  </g>
+                );
+              })}
             </svg>
           </div>
 
-          <div className="timeline" aria-label="Tracking timeline">
-            <span style={{ width: `${selected.trackedPct}%` }} />
-            <i style={{ left: '34%' }} />
-            <i style={{ left: '63%' }} />
-            <i style={{ left: '82%' }} />
-          </div>
-          {uploadedVideo ? (
-            <label className="scrub-control">
-              <span>
-                Video time {currentTime.toFixed(2)} s / {activeDuration.toFixed(2)} s
-              </span>
+          <div className="frame-controls">
+            <button aria-label="Previous frame" onClick={() => stepFrame(-1)} type="button">
+              <ChevronLeft size={17} aria-hidden="true" />
+              Prev
+            </button>
+            <button aria-label="Play or pause" onClick={togglePlayback} type="button">
+              {isPlaying ? <Pause size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+              {isPlaying ? 'Pause' : 'Play'}
+            </button>
+            <button aria-label="Next frame" onClick={() => stepFrame(1)} type="button">
+              Next
+              <ChevronRight size={17} aria-hidden="true" />
+            </button>
+            <label>
+              <span>Jump frame</span>
               <input
-                max={activeDuration || 0}
-                min="0"
-                onChange={(event) => {
-                  const time = Number(event.target.value);
-                  setCurrentTime(time);
-                  if (videoRef.current) videoRef.current.currentTime = time;
-                }}
-                step="0.01"
-                type="range"
-                value={Math.min(currentTime, activeDuration || 0)}
+                max={totalFrames}
+                min="1"
+                onChange={(event) => seekToFrame(Number(event.target.value) - 1)}
+                type="number"
+                value={currentFrame + 1}
               />
             </label>
-          ) : null}
+            <label>
+              <span>FPS</span>
+              <input
+                max="120"
+                min="1"
+                onChange={(event) => setFps(Number(event.target.value))}
+                step="0.001"
+                type="number"
+                value={Number(fps.toFixed(3))}
+              />
+            </label>
+          </div>
+
+          <label className="scrub-control">
+            <span>
+              Video time {currentTime.toFixed(2)} s / {activeDuration.toFixed(2)} s
+            </span>
+            <input
+              max={activeDuration || 0}
+              min="0"
+              onChange={(event) => {
+                const time = Number(event.target.value);
+                setCurrentTime(time);
+                if (videoRef.current) videoRef.current.currentTime = time;
+              }}
+              step={1 / fps}
+              type="range"
+              value={Math.min(currentTime, activeDuration || 0)}
+            />
+          </label>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <label className="control">
@@ -635,7 +870,7 @@ export default function Home() {
               />
             </label>
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="mt-3 grid gap-3 md:grid-cols-5">
             <label className="control compact">
               <span>Platform X: {platform.x}px</span>
               <input
@@ -669,19 +904,33 @@ export default function Home() {
             <label className="control compact">
               <span>Hole ring: {holeScale.toFixed(2)}</span>
               <input
-                max="1"
-                min="0.75"
-                onChange={(event) => setHoleScale(Number(event.target.value))}
+                max="1.05"
+                min="0.7"
+                onChange={(event) =>
+                  updateHoleTemplate(Number(event.target.value), rotationDegrees)
+                }
                 step="0.01"
                 type="range"
                 value={holeScale}
               />
             </label>
+            <label className="control compact">
+              <span>Rotation: {rotationDegrees} deg</span>
+              <input
+                max="180"
+                min="-180"
+                onChange={(event) =>
+                  updateHoleTemplate(holeScale, Number(event.target.value))
+                }
+                type="range"
+                value={rotationDegrees}
+              />
+            </label>
           </div>
           <p className="roi-note">
-            <Move size={14} aria-hidden="true" />
-            ROI editing is now live: adjust the platform center, radius, and hole ring
-            before running tracking.
+            <MousePointer2 size={14} aria-hidden="true" />
+            Select a tool, then click or drag directly on the overlay. Left/right arrow
+            keys step by frame; space toggles playback.
           </p>
         </section>
 
@@ -706,14 +955,21 @@ export default function Home() {
               <strong>{selected.trackedPct.toFixed(1)}% frames tracked</strong>
             </div>
             <p>
-              {selected.failureFrames} frames require review. Automatic output
-              and manual correction are kept separate.
+              {selected.failureFrames} frames require review. Manual correction
+              records are stored separately from automatic draft values.
             </p>
           </div>
 
           <div className="warning-box">
             <AlertTriangle size={18} aria-hidden="true" />
             <p>{selected.caveat}</p>
+          </div>
+
+          <div className="annotation-summary">
+            <h3>Current frame annotations</h3>
+            <p>Body: {Math.round(bodyPoint.x)}, {Math.round(bodyPoint.y)}</p>
+            <p>Nose: {Math.round(nosePoint.x)}, {Math.round(nosePoint.y)}</p>
+            <p>Events: {events.length}</p>
           </div>
 
           <button
