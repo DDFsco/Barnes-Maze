@@ -176,6 +176,10 @@ body {
     @apply h-14 w-20 rounded object-cover grayscale;
   }
 
+  .local-video-icon {
+    @apply flex h-14 w-20 shrink-0 items-center justify-center rounded bg-primary/10 text-primary;
+  }
+
   .video-row span {
     @apply min-w-0;
   }
@@ -217,12 +221,26 @@ body {
   }
 
   .video-stage img,
+  .video-stage video,
   .video-stage svg {
     @apply absolute inset-0 h-full w-full;
   }
 
-  .video-stage img {
+  .video-stage img,
+  .video-stage video {
     @apply object-cover grayscale;
+  }
+
+  .video-stage video {
+    @apply bg-zinc-950;
+  }
+
+  .video-stage video::-webkit-media-controls-panel {
+    background-image: linear-gradient(transparent, rgb(0 0 0 / 58%));
+  }
+
+  .video-stage svg {
+    pointer-events: none;
   }
 
   .platform-ring {
@@ -288,6 +306,10 @@ body {
     @apply flex min-h-24 flex-col justify-between rounded-md border border-border bg-background p-3 text-sm;
   }
 
+  .control.compact {
+    @apply min-h-20;
+  }
+
   .control span {
     @apply font-medium;
   }
@@ -299,6 +321,26 @@ body {
 
   .control select {
     @apply h-10 rounded-md border border-input bg-card px-2;
+  }
+
+  .scrub-control {
+    @apply mt-4 block rounded-md border border-border bg-background p-3 text-sm;
+  }
+
+  .scrub-control span {
+    @apply mb-2 block font-medium;
+  }
+
+  .scrub-control input {
+    @apply w-full;
+  }
+
+  .roi-note {
+    @apply mt-3 flex items-center gap-2 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-muted-foreground;
+  }
+
+  .roi-note svg {
+    @apply shrink-0 text-primary;
   }
 
   .metric-grid {

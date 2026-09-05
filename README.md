@@ -12,7 +12,10 @@ This is the first runnable P0 slice. It includes:
 
 - A static web app shell for Barnes maze analysis.
 - The three Salk sample trials represented with committed still frames.
+- Local MP4 loading through the browser file picker.
+- Native video playback and timestamp scrubbing for user-selected videos.
 - Editable target-hole and detection-threshold controls.
+- Live ROI controls for platform center, platform radius, and hole-ring radius.
 - Draft per-trial metrics and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
@@ -47,13 +50,16 @@ npm run dev
 ## How to Operate
 
 1. Open the app.
-2. Choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the left session list.
-3. Review the platform boundary, hole markers, target hole, body point, trajectory, and nose-proxy vector over the representative frame.
-4. Change the target hole with the dropdown.
-5. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-6. Click `Mark reviewed correction` to simulate an auditable human correction.
-7. Click `Download CSV` for the trial summary.
-8. Use the JSON icon above the video panel to export a reloadable project-state sketch.
+2. To use the built-in demo state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the left session list.
+3. To load a real local video, click `Load videos` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
+4. Review the platform boundary, hole markers, target hole, body point, trajectory, and nose-proxy vector over the frame/video.
+5. If a local MP4 is loaded, use the native video controls or the `Video time` scrubber to move through the trial.
+6. Change the target hole with the dropdown.
+7. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
+8. Adjust platform X/Y, platform radius, and hole-ring scale to align the ROI overlay with the video.
+9. Click `Mark reviewed correction` to simulate an auditable human correction.
+10. Click `Download CSV` for the trial summary.
+11. Use the JSON icon above the video panel to export a reloadable project-state sketch.
 
 ## Design Details
 

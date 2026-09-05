@@ -6,12 +6,13 @@ import {
   Download,
   FileJson,
   FolderOpen,
+  Move,
   MousePointer2,
   Play,
   RotateCcw,
   Save,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type SampleVideo = {
   id: string;
@@ -35,6 +36,14 @@ type SampleVideo = {
   targetQuadrantPct: number;
   strategy: 'spatial' | 'serial' | 'random';
   caveat: string;
+};
+
+type UploadedVideo = {
+  name: string;
+  url: string;
+  durationSeconds: number;
+  width: number;
+  height: number;
 };
 
 const samples: SampleVideo[] = [
@@ -125,27 +134,36 @@ function formatSeconds(value: number) {
   return `${minutes}:${seconds}`;
 }
 
-function holePoints(sample: SampleVideo) {
+function buildHolePoints(platform: SampleVideo['platform'], scale: number) {
   return Array.from({ length: 20 }, (_, index) => {
     const angle = -Math.PI / 2 + (index / 20) * Math.PI * 2;
-    const r = sample.platform.r * 0.92;
+    const r = platform.r * scale;
     return {
       id: index + 1,
-      x: sample.platform.x + Math.cos(angle) * r,
-      y: sample.platform.y + Math.sin(angle) * r,
+      x: platform.x + Math.cos(angle) * r,
+      y: platform.y + Math.sin(angle) * r,
     };
   });
 }
 
 export default function Home() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [selectedId, setSelectedId] = useState(samples[0].id);
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
   const [dwell, setDwell] = useState(0.5);
   const [distance, setDistance] = useState(1.8);
   const [corrections, setCorrections] = useState(1);
+  const [uploadedVideo, setUploadedVideo] = useState<UploadedVideo | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [platform, setPlatform] = useState(samples[0].platform);
+  const [holeScale, setHoleScale] = useState(0.92);
 
   const selected = samples.find((sample) => sample.id === selectedId) ?? samples[0];
-  const holes = useMemo(() => holePoints(selected), [selected]);
+  const holes = useMemo(() => buildHolePoints(platform, holeScale), [holeScale, platform]);
+  const activeDuration = uploadedVideo?.durationSeconds ?? selected.durationSeconds;
+  const activeLabel = uploadedVideo?.name ?? selected.fileName;
+  const activeFrame = uploadedVideo ? null : selected.frame;
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -189,6 +207,12 @@ export default function Home() {
   }, [adjustedErrors, corrections, selected.id, targetHole]);
 
   useEffect(() => {
+    return () => {
+      if (uploadedVideo?.url) URL.revokeObjectURL(uploadedVideo.url);
+    };
+  }, [uploadedVideo?.url]);
+
+  useEffect(() => {
     const modelContext = document.modelContext;
     if (!modelContext?.registerTool) return;
 
@@ -209,9 +233,10 @@ export default function Home() {
           annotations: { readOnlyHint: true, untrustedContentHint: false },
           execute() {
             return {
-              video: selected.fileName,
+              video: activeLabel,
               targetHole,
               thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
+              roi: { platform, holeRingScale: holeScale },
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -282,7 +307,49 @@ export default function Home() {
     ).catch(() => undefined);
 
     return () => lifecycle.abort();
-  }, [adjustedErrors, corrections, distance, dwell, selected, targetHole]);
+  }, [
+    activeLabel,
+    adjustedErrors,
+    corrections,
+    distance,
+    dwell,
+    holeScale,
+    platform,
+    selected,
+    targetHole,
+  ]);
+
+  function selectSample(sample: SampleVideo) {
+    setSelectedId(sample.id);
+    setTargetHole(sample.targetHole);
+    setPlatform(sample.platform);
+    setHoleScale(0.92);
+    setCurrentTime(0);
+  }
+
+  function loadVideo(file: File) {
+    const previousUrl = uploadedVideo?.url;
+    const nextUrl = URL.createObjectURL(file);
+    setUploadedVideo({
+      name: file.name,
+      url: nextUrl,
+      durationSeconds: 0,
+      width: 640,
+      height: 480,
+    });
+    setCurrentTime(0);
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+  }
+
+  function updatePlatform(key: keyof SampleVideo['platform'], value: number) {
+    setPlatform((current) => ({ ...current, [key]: value }));
+  }
+
+  function resetRoi() {
+    setPlatform(selected.platform);
+    setHoleScale(0.92);
+    setTargetHole(selected.targetHole);
+  }
 
   function download(text: string, fileName: string, type: string) {
     const blob = new Blob([text], { type });
@@ -310,7 +377,22 @@ export default function Home() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="tool-button" type="button">
+            <input
+              accept="video/mp4,video/*"
+              className="sr-only"
+              multiple={false}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) loadVideo(file);
+              }}
+              ref={fileInputRef}
+              type="file"
+            />
+            <button
+              className="tool-button"
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+            >
               <FolderOpen size={16} aria-hidden="true" />
               Load videos
             </button>
@@ -326,8 +408,27 @@ export default function Home() {
         <aside className="panel order-2 xl:order-1">
           <div className="panel-heading">
             <h2>Session</h2>
-            <span>3 videos</span>
+            <span>{uploadedVideo ? 'local video loaded' : '3 demo videos'}</span>
           </div>
+          {uploadedVideo ? (
+            <button
+              aria-label={`Selected local video ${uploadedVideo.name}`}
+              className="video-row active"
+              type="button"
+            >
+              <span className="local-video-icon">
+                <Play size={18} aria-hidden="true" />
+              </span>
+              <span>
+                <strong>{uploadedVideo.name}</strong>
+                <small>
+                  local MP4 · {uploadedVideo.durationSeconds > 0
+                    ? formatSeconds(uploadedVideo.durationSeconds)
+                    : 'metadata pending'}
+                </small>
+              </span>
+            </button>
+          ) : null}
           <div className="space-y-2">
             {samples.map((sample) => (
               <button
@@ -335,8 +436,7 @@ export default function Home() {
                 className={`video-row ${sample.id === selected.id ? 'active' : ''}`}
                 key={sample.id}
                 onClick={() => {
-                  setSelectedId(sample.id);
-                  setTargetHole(sample.targetHole);
+                  selectSample(sample);
                 }}
                 type="button"
               >
@@ -370,11 +470,11 @@ export default function Home() {
             <div>
               <h2>{selected.label}</h2>
               <span>
-                {selected.fileName} · {selected.fps} · {formatSeconds(selected.durationSeconds)}
+                {activeLabel} · {uploadedVideo ? `${uploadedVideo.width}x${uploadedVideo.height}` : selected.fps} · {formatSeconds(activeDuration)}
               </span>
             </div>
             <div className="icon-strip" aria-label="Video tools">
-              <button aria-label="Reset view" type="button">
+              <button aria-label="Reset ROI" onClick={resetRoi} type="button">
                 <RotateCcw size={16} />
               </button>
               <button aria-label="Save corrections" type="button">
@@ -388,6 +488,8 @@ export default function Home() {
                       {
                         video: selected.fileName,
                         targetHole,
+                        roi: { platform, holeRingScale: holeScale },
+                        currentTimeSeconds: currentTime,
                         thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
                         corrections,
                         source: 'BarnesAI demo project state',
@@ -407,17 +509,43 @@ export default function Home() {
           </div>
 
           <div className="video-stage">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              alt={`Representative frame from ${selected.fileName}`}
-              src={selected.frame}
-            />
+            {uploadedVideo ? (
+              <video
+                aria-label={`Loaded video ${uploadedVideo.name}`}
+                controls
+                muted
+                onLoadedMetadata={(event) => {
+                  const video = event.currentTarget;
+                  setUploadedVideo((current) =>
+                    current
+                      ? {
+                          ...current,
+                          durationSeconds: video.duration,
+                          width: video.videoWidth || 640,
+                          height: video.videoHeight || 480,
+                        }
+                      : current,
+                  );
+                }}
+                onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                ref={videoRef}
+                src={uploadedVideo.url}
+              />
+            ) : (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt={`Representative frame from ${selected.fileName}`}
+                  src={activeFrame ?? selected.frame}
+                />
+              </>
+            )}
             <svg aria-hidden="true" viewBox="0 0 640 480">
               <circle
                 className="platform-ring"
-                cx={selected.platform.x}
-                cy={selected.platform.y}
-                r={selected.platform.r}
+                cx={platform.x}
+                cy={platform.y}
+                r={platform.r}
               />
               {holes.map((hole) => (
                 <g key={hole.id}>
@@ -434,7 +562,7 @@ export default function Home() {
               ))}
               <path
                 className="trajectory"
-                d={`M ${selected.platform.x} ${selected.platform.y} C ${selected.platform.x - 80} ${selected.platform.y + 40}, ${selected.mouse.x - 60} ${selected.mouse.y - 20}, ${selected.mouse.x} ${selected.mouse.y}`}
+                d={`M ${platform.x} ${platform.y} C ${platform.x - 80} ${platform.y + 40}, ${selected.mouse.x - 60} ${selected.mouse.y - 20}, ${selected.mouse.x} ${selected.mouse.y}`}
               />
               <circle className="body-point" cx={selected.mouse.x} cy={selected.mouse.y} r="9" />
               <line
@@ -453,6 +581,25 @@ export default function Home() {
             <i style={{ left: '63%' }} />
             <i style={{ left: '82%' }} />
           </div>
+          {uploadedVideo ? (
+            <label className="scrub-control">
+              <span>
+                Video time {currentTime.toFixed(2)} s / {activeDuration.toFixed(2)} s
+              </span>
+              <input
+                max={activeDuration || 0}
+                min="0"
+                onChange={(event) => {
+                  const time = Number(event.target.value);
+                  setCurrentTime(time);
+                  if (videoRef.current) videoRef.current.currentTime = time;
+                }}
+                step="0.01"
+                type="range"
+                value={Math.min(currentTime, activeDuration || 0)}
+              />
+            </label>
+          ) : null}
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <label className="control">
@@ -488,6 +635,54 @@ export default function Home() {
               />
             </label>
           </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-4">
+            <label className="control compact">
+              <span>Platform X: {platform.x}px</span>
+              <input
+                max="640"
+                min="0"
+                onChange={(event) => updatePlatform('x', Number(event.target.value))}
+                type="range"
+                value={platform.x}
+              />
+            </label>
+            <label className="control compact">
+              <span>Platform Y: {platform.y}px</span>
+              <input
+                max="480"
+                min="0"
+                onChange={(event) => updatePlatform('y', Number(event.target.value))}
+                type="range"
+                value={platform.y}
+              />
+            </label>
+            <label className="control compact">
+              <span>Radius: {platform.r}px</span>
+              <input
+                max="240"
+                min="120"
+                onChange={(event) => updatePlatform('r', Number(event.target.value))}
+                type="range"
+                value={platform.r}
+              />
+            </label>
+            <label className="control compact">
+              <span>Hole ring: {holeScale.toFixed(2)}</span>
+              <input
+                max="1"
+                min="0.75"
+                onChange={(event) => setHoleScale(Number(event.target.value))}
+                step="0.01"
+                type="range"
+                value={holeScale}
+              />
+            </label>
+          </div>
+          <p className="roi-note">
+            <Move size={14} aria-hidden="true" />
+            ROI editing is now live: adjust the platform center, radius, and hole ring
+            before running tracking.
+          </p>
         </section>
 
         <aside className="panel order-3">

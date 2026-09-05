@@ -11,6 +11,7 @@ Agent judgment moments:
 - The initial BarnesAI master specification was intentionally reduced. The original Salk Task 1 makes manual correction, visible definitions, and end-to-end sample-video analysis more important than a large backend or ML platform.
 - The first implementation path was kept as classical browser-side CV plus review, because the sample frames show a high-contrast dark animal on a pale platform. Nose tracking is not represented as ground truth; it is explicitly labeled as a proxy.
 - The first attempt to run the app exposed a Node/version/native dependency problem. Reinstalling with the bundled Node 24 fixed the missing native binding.
+- The next product increment prioritized real user input over deeper mock metrics: local MP4 loading, playback, timestamp scrubbing, and editable ROI controls now exist before any CV tracking claims are made.
 
 Checks performed:
 
@@ -18,4 +19,3 @@ Checks performed:
 - Inspected all three representative sample frames.
 - Built a first runnable workbench with sample trial switching, threshold changes, correction tracking, and CSV/JSON export.
 - Added unit tests for frame-time conversion, path length, target visit, escape latency, and primary/total error counting.
-
