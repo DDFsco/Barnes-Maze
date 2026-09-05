@@ -297,15 +297,8 @@ export default function Home() {
   const [holes, setHoles] = useState(() => buildHolePoints(samples[0].platform, 0.92));
   const [holeScale, setHoleScale] = useState(0.92);
   const [rotationDegrees, setRotationDegrees] = useState(0);
-  const [annotationStore, setAnnotationStore] = useState<AnnotationStore>(() => {
-    if (typeof window === 'undefined') return {};
-    try {
-      const stored = window.localStorage.getItem(annotationStorageKey);
-      return stored ? (JSON.parse(stored) as AnnotationStore) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [annotationStore, setAnnotationStore] = useState<AnnotationStore>({});
+  const [hasLoadedLocalAnnotations, setHasLoadedLocalAnnotations] = useState(false);
   const [layers, setLayers] = useState<LayerVisibility>({
     maze: true,
     wells: true,
@@ -385,9 +378,24 @@ export default function Home() {
   }, [uploadedVideo?.url]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    const restoreId = window.setTimeout(() => {
+      try {
+        const stored = window.localStorage.getItem(annotationStorageKey);
+        if (stored) setAnnotationStore(JSON.parse(stored) as AnnotationStore);
+      } catch {
+        setAnnotationStore({});
+      } finally {
+        setHasLoadedLocalAnnotations(true);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(restoreId);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedLocalAnnotations) return;
     window.localStorage.setItem(annotationStorageKey, JSON.stringify(annotationStore));
-  }, [annotationStore]);
+  }, [annotationStore, hasLoadedLocalAnnotations]);
 
   useEffect(() => {
     const modelContext = document.modelContext;
