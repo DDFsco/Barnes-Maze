@@ -1698,28 +1698,20 @@ export default function Home() {
               </small>
               <p>{trackingRun.message}</p>
               <div className="tracking-actions">
-                <button
-                  disabled={!uploadedVideo || trackingRun.status === 'running'}
-                  onClick={trackFullVideo}
-                  type="button"
-                >
-                  Track full
-                </button>
-                <button
-                  disabled={!uploadedVideo || trackingRun.status === 'running'}
-                  onClick={trackNextFrames}
-                  type="button"
-                >
-                  Next 60
-                </button>
-                <button
-                  className="tracking-stop"
-                  disabled={trackingRun.status !== 'running'}
-                  onClick={stopTracking}
-                  type="button"
-                >
-                  Stop
-                </button>
+                {trackingRun.status === 'running' ? (
+                  <button className="tracking-stop" onClick={stopTracking} type="button">
+                    Stop
+                  </button>
+                ) : (
+                  <>
+                    <button disabled={!uploadedVideo} onClick={trackFullVideo} type="button">
+                      Track full
+                    </button>
+                    <button disabled={!uploadedVideo} onClick={trackNextFrames} type="button">
+                      Next 60
+                    </button>
+                  </>
+                )}
               </div>
             </section>
 
