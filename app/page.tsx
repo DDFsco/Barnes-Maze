@@ -2210,62 +2210,65 @@ export default function Home() {
             ref={analysisCanvasRef}
             width="640"
           />
-        </section>
 
-        <aside className="panel order-3">
-          <div className="panel-heading">
-            <h2>Results</h2>
-            <span>{eventLog.length > 0 ? 'event-derived' : 'draft metrics'}</span>
-          </div>
-
-          <div className="metric-grid">
-            <Metric label="Primary latency" value={`${derivedPrimaryLatency.toFixed(1)} s`} />
-            <Metric label="Total latency" value={`${derivedTotalLatency.toFixed(1)} s`} />
-            <Metric
-              label="Primary errors"
-              value={String(eventLog.length > 0 ? primaryErrors : selected.primaryErrors)}
-            />
-            <Metric label="Total errors" value={String(adjustedErrors)} />
-            <Metric label="Events" value={String(eventLog.length)} />
-            <Metric label="Path length" value={`${selected.pathCm.toFixed(1)} cm`} />
-            <Metric label="Speed" value={`${selected.speedCms.toFixed(1)} cm/s`} />
-          </div>
-
-          <div className="quality-box">
-            <div>
-              <CircleDot size={18} aria-hidden="true" />
-              <strong>{selected.trackedPct.toFixed(1)}% frames tracked</strong>
+          <section className="results-section">
+            <div className="panel-heading">
+              <h2>Results</h2>
+              <span>{eventLog.length > 0 ? 'event-derived' : 'draft metrics'}</span>
             </div>
-            <p>
-              {selected.failureFrames} frames require review. Manual correction
-              records are stored separately from automatic draft values.
-            </p>
-          </div>
 
-          <div className="warning-box">
-            <AlertTriangle size={18} aria-hidden="true" />
-            <p>{selected.caveat}</p>
-          </div>
+            <div className="results-grid">
+              <div className="metric-grid">
+                <Metric label="Primary latency" value={`${derivedPrimaryLatency.toFixed(1)} s`} />
+                <Metric label="Total latency" value={`${derivedTotalLatency.toFixed(1)} s`} />
+                <Metric
+                  label="Primary errors"
+                  value={String(eventLog.length > 0 ? primaryErrors : selected.primaryErrors)}
+                />
+                <Metric label="Total errors" value={String(adjustedErrors)} />
+                <Metric label="Events" value={String(eventLog.length)} />
+                <Metric label="Path length" value={`${selected.pathCm.toFixed(1)} cm`} />
+                <Metric label="Speed" value={`${selected.speedCms.toFixed(1)} cm/s`} />
+              </div>
 
-          <button
-            className="wide-action"
-            onClick={() => setCorrections((value) => value + 1)}
-            type="button"
-          >
-            <MousePointer2 size={16} aria-hidden="true" />
-            Mark reviewed correction
-          </button>
-          <button
-            className="wide-action primary"
-            onClick={() => download(csv, 'barnesai-trial-summary.csv', 'text/csv')}
-            type="button"
-          >
-            <Download size={16} aria-hidden="true" />
-            Download CSV
-          </button>
+              <div className="result-notes">
+                <div className="quality-box">
+                  <div>
+                    <CircleDot size={18} aria-hidden="true" />
+                    <strong>{selected.trackedPct.toFixed(1)}% frames tracked</strong>
+                  </div>
+                  <p>
+                    {selected.failureFrames} frames require review. Manual correction
+                    records are stored separately from automatic draft values.
+                  </p>
+                </div>
 
-          <div className="mt-4">
-            <h3 className="mb-2 text-sm font-semibold">Search strategy</h3>
+                <div className="warning-box">
+                  <AlertTriangle size={18} aria-hidden="true" />
+                  <p>{selected.caveat}</p>
+                </div>
+
+                <div className="result-actions">
+                  <button
+                    className="wide-action"
+                    onClick={() => setCorrections((value) => value + 1)}
+                    type="button"
+                  >
+                    <MousePointer2 size={16} aria-hidden="true" />
+                    Mark reviewed correction
+                  </button>
+                  <button
+                    className="wide-action primary"
+                    onClick={() => download(csv, 'barnesai-trial-summary.csv', 'text/csv')}
+                    type="button"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Download CSV
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="strategy">
               <strong>{selected.strategy}</strong>
               <span>
@@ -2273,7 +2276,49 @@ export default function Home() {
                 and center crossings. User can override before export.
               </span>
             </div>
+          </section>
+        </section>
+
+        <aside className="panel order-3 guide-panel">
+          <div className="panel-heading">
+            <h2>How to use</h2>
+            <span>quick workflow</span>
           </div>
+
+          <ol className="guide-steps">
+            <li>
+              <strong>Load video</strong>
+              <span>Use Load video, or choose a sample trial from the video queue.</span>
+            </li>
+            <li>
+              <strong>Align maze</strong>
+              <span>Use Maze to move the platform. Use Well to drag individual wells.</span>
+            </li>
+            <li>
+              <strong>Set target</strong>
+              <span>Select Target, then click the escape well on the overlay.</span>
+            </li>
+            <li>
+              <strong>Edit mouse</strong>
+              <span>Use Body and Nose to correct nodes. Use Add nodes for another mouse.</span>
+            </li>
+            <li>
+              <strong>Track video</strong>
+              <span>Run Track full for the whole video, or Next 60 for a short pass.</span>
+            </li>
+            <li>
+              <strong>Review flags</strong>
+              <span>Use Next flagged to inspect weak frames, then Mark reviewed.</span>
+            </li>
+            <li>
+              <strong>Check lists</strong>
+              <span>Use the right dock tabs: Mice, Wells, and Events.</span>
+            </li>
+            <li>
+              <strong>Export</strong>
+              <span>Use Download CSV below the video, or the JSON icon above it.</span>
+            </li>
+          </ol>
         </aside>
       </section>
     </main>
