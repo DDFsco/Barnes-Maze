@@ -15,8 +15,8 @@ This is the first runnable P0 slice. It includes:
 - Local MP4 loading through the browser file picker.
 - Video underlay with an interactive SVG annotation overlay.
 - Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
-- Editable target-hole and detection-threshold controls.
-- Live ROI controls for platform center/radius, well-ring scale, well-map rotation, draggable individual wells, target selection, and mouse body/nose proxy corrections.
+- Editable target-well and detection-threshold controls.
+- Live ROI controls for platform center/radius, well-ring scale, well-map rotation, addable/removable wells, draggable individual wells, target selection, and mouse body/nose proxy corrections.
 - Frame-level manual annotation records for mouse skeletons and visit/escape events, persisted locally in browser storage.
 - Browser-side current-frame extraction through a hidden canvas, with a draft dark-component detector that can seed body/nose correction points for the active frame.
 - A `Track full` pass for local MP4s, plus a shorter `Next 60` debug pass, both showing progress while storing per-frame body/nose annotations for review.
@@ -57,29 +57,30 @@ npm run dev
 1. Open the app.
 2. To use the built-in sample state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the trial strip above the video workspace.
 3. To load a real local video, click `Load video` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
-4. Review the platform boundary, hole markers, target hole, and the preset body/nose skeleton over the frame/video.
+4. Review the platform boundary, well markers, target well, and the preset body/nose skeleton over the frame/video.
 5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
 6. Use the tool and layer dock immediately to the left of the video window, like a drawing app:
    - Layer checkboxes show or hide Platform boundary, Wells, Mice / Skeleton, and Events.
    - `Add nodes`: click the video overlay to create another mouse skeleton with body and nose nodes.
    - `Select`: click near an existing skeleton to select and drag that body/nose pair together.
    - `Maze`: drag the full platform and well map together.
-   - `Hole`: drag the nearest well marker to the true hole center.
+   - `Well`: drag the nearest well marker to the true hole center.
    - `Target`: click a well to mark it as the target.
    - `Body`: click or drag the selected skeleton's body point for the current frame.
    - `Nose`: click or drag the selected skeleton's nose-proxy point for the current frame.
    - `Visit`: click near a well to add a manual investigation event.
    - `Escape`: click near a well to add a manual escape event.
 7. Use the dock immediately to the right of the video window, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
-8. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
-9. Click `Analyze frame` in the `Current frame` dock to run a local draft detector on the currently displayed frame. It estimates a dark mouse component inside the platform ROI, writes body/nose proxy points for the active frame, and reports draft confidence.
-10. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
-11. Use `Review queue` to inspect frames where tracking failed or confidence was low. `Next flagged` jumps to the next frame needing review; `Mark reviewed` clears the current frame from the open queue.
-12. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
-13. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-14. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-15. Click `Download CSV` for the trial summary.
-16. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, and correction records.
+8. Use the `Wells` dock to select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic.
+9. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
+10. Click `Analyze frame` in the `Current frame` dock to run a local draft detector on the currently displayed frame. It estimates a dark mouse component inside the platform ROI, writes body/nose proxy points for the active frame, and reports draft confidence.
+11. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
+12. Use `Review queue` to inspect frames where tracking failed or confidence was low. `Next flagged` jumps to the next frame needing review; `Mark reviewed` clears the current frame from the open queue.
+13. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
+14. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
+15. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+16. Click `Download CSV` for the trial summary.
+17. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, and correction records.
 
 ## Design Details
 

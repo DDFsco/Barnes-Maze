@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Point = { x: number; y: number };
 type Platform = Point & { r: number };
+type Well = Point & { id: number; radius: number };
 type ToolMode =
   | 'select'
   | 'add-nodes'
@@ -206,7 +207,7 @@ const toolModes: Array<{ id: ToolMode; label: string }> = [
   { id: 'select', label: 'Select' },
   { id: 'add-nodes', label: 'Add nodes' },
   { id: 'move-maze', label: 'Maze' },
-  { id: 'move-hole', label: 'Hole' },
+  { id: 'move-hole', label: 'Well' },
   { id: 'target', label: 'Target' },
   { id: 'body', label: 'Body' },
   { id: 'nose', label: 'Nose' },
@@ -250,10 +251,10 @@ function formatSeconds(value: number) {
   return `${minutes}:${seconds}`;
 }
 
-function buildHolePoints(platform: Platform, scale: number, rotationDegrees = 0) {
-  return Array.from({ length: 20 }, (_, index) => {
+function buildWellPoints(platform: Platform, scale: number, rotationDegrees = 0, count = 20): Well[] {
+  return Array.from({ length: count }, (_, index) => {
     const angle =
-      -Math.PI / 2 + (rotationDegrees * Math.PI) / 180 + (index / 20) * Math.PI * 2;
+      -Math.PI / 2 + (rotationDegrees * Math.PI) / 180 + (index / count) * Math.PI * 2;
     const r = platform.r * scale;
     return {
       id: index + 1,
@@ -262,6 +263,10 @@ function buildHolePoints(platform: Platform, scale: number, rotationDegrees = 0)
       radius: 10,
     };
   });
+}
+
+function buildHolePoints(platform: Platform, scale: number, rotationDegrees = 0) {
+  return buildWellPoints(platform, scale, rotationDegrees, 20);
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -304,6 +309,7 @@ export default function Home() {
   const [fps, setFps] = useState(samples[0].fpsValue);
   const [platform, setPlatform] = useState(samples[0].platform);
   const [holes, setHoles] = useState(() => buildHolePoints(samples[0].platform, 0.92));
+  const [selectedWellId, setSelectedWellId] = useState(samples[0].targetHole);
   const [holeScale, setHoleScale] = useState(0.92);
   const [rotationDegrees, setRotationDegrees] = useState(0);
   const [annotationStore, setAnnotationStore] = useState<AnnotationStore>({});
@@ -332,6 +338,7 @@ export default function Home() {
   const skeletons = frameAnnotation.skeletons;
   const selectedSkeletonId = frameAnnotation.selectedSkeletonId;
   const events = frameAnnotation.events;
+  const selectedWell = holes.find((hole) => hole.id === selectedWellId) ?? holes[0] ?? null;
   const selectedSkeleton =
     skeletons.find((skeleton) => skeleton.id === selectedSkeletonId) ?? skeletons[0];
   const savedFrameCount = Object.values(annotationStore[activeVideoKey] ?? {}).filter(
@@ -357,7 +364,7 @@ export default function Home() {
         'video',
         'duration_seconds',
         'fps',
-        'target_hole',
+        'target_well',
         'primary_latency_seconds',
         'total_latency_seconds',
         'primary_errors',
@@ -439,6 +446,7 @@ export default function Home() {
               video: activeLabel,
               currentFrame,
               targetHole,
+              selectedWellId,
               thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
               layers,
               roi: { platform, holes, holeScale, rotationDegrees },
@@ -493,6 +501,7 @@ export default function Home() {
     platform,
     rotationDegrees,
     selected,
+    selectedWellId,
     selectedSkeletonId,
     skeletons,
     savedFrameCount,
@@ -511,6 +520,7 @@ export default function Home() {
     setPlatform(sample.platform);
     const nextHoles = buildHolePoints(sample.platform, 0.92, 0);
     setHoles(nextHoles);
+    setSelectedWellId(sample.targetHole);
     setHoleScale(0.92);
     setRotationDegrees(0);
     setFps(sample.fpsValue);
@@ -590,13 +600,22 @@ export default function Home() {
     setPlatform((current) => ({ ...current, [key]: value }));
     if (key === 'x') setHoles((current) => current.map((hole) => ({ ...hole, x: hole.x + delta })));
     if (key === 'y') setHoles((current) => current.map((hole) => ({ ...hole, y: hole.y + delta })));
-    if (key === 'r') setHoles(buildHolePoints({ ...platform, r: value }, holeScale, rotationDegrees));
+    if (key === 'r') {
+      const ratio = value / Math.max(1, platform.r);
+      setHoles((current) =>
+        current.map((hole) => ({
+          ...hole,
+          x: platform.x + (hole.x - platform.x) * ratio,
+          y: platform.y + (hole.y - platform.y) * ratio,
+        })),
+      );
+    }
   }
 
   function updateHoleTemplate(nextScale: number, nextRotation: number) {
     setHoleScale(nextScale);
     setRotationDegrees(nextRotation);
-    setHoles(buildHolePoints(platform, nextScale, nextRotation));
+    setHoles(buildWellPoints(platform, nextScale, nextRotation, Math.max(1, holes.length)));
   }
 
   function resetRoi() {
@@ -605,6 +624,7 @@ export default function Home() {
     setRotationDegrees(0);
     setHoles(buildHolePoints(selected.platform, 0.92, 0));
     setTargetHole(selected.targetHole);
+    setSelectedWellId(selected.targetHole);
     setAnnotationStore((current) => {
       const next = { ...current };
       delete next[activeVideoKey];
@@ -676,6 +696,34 @@ export default function Home() {
       selectedSkeletonId: nextSkeletons[0]?.id ?? 0,
     }));
     setCorrections((value) => value + 1);
+  }
+
+  function addWell() {
+    const nextId = Math.max(0, ...holes.map((hole) => hole.id)) + 1;
+    const angle =
+      -Math.PI / 2 +
+      (rotationDegrees * Math.PI) / 180 +
+      (holes.length / Math.max(1, holes.length + 1)) * Math.PI * 2;
+    const ringRadius = platform.r * holeScale;
+    const nextWell = {
+      id: nextId,
+      x: clamp(platform.x + Math.cos(angle) * ringRadius, 0, 640),
+      y: clamp(platform.y + Math.sin(angle) * ringRadius, 0, 480),
+      radius: selectedWell?.radius ?? 10,
+    };
+    setHoles((current) => [...current, nextWell]);
+    setSelectedWellId(nextId);
+    setLayers((current) => ({ ...current, wells: true }));
+  }
+
+  function removeSelectedWell() {
+    if (!selectedWell || holes.length <= 1) return;
+    const nextSelectedWell = holes.find((hole) => hole.id !== selectedWell.id);
+    setHoles((current) => current.filter((hole) => hole.id !== selectedWell.id));
+    if (nextSelectedWell) {
+      setSelectedWellId(nextSelectedWell.id);
+      if (targetHole === selectedWell.id) setTargetHole(nextSelectedWell.id);
+    }
   }
 
   function saveCurrentFrame() {
@@ -829,7 +877,17 @@ export default function Home() {
     const nearestTarget = holes.reduce((nearest, hole) => {
       const holeDistance = Math.hypot(hole.x - body.x, hole.y - body.y);
       return holeDistance < nearest.distance ? { hole, distance: holeDistance } : nearest;
-    }, { hole: holes[0], distance: Infinity }).hole;
+    }, { hole: holes[0] ?? null, distance: Infinity }).hole;
+    if (!nearestTarget) {
+      return {
+        status: 'error',
+        message: 'No wells are available for nose direction estimation',
+        confidence: 0,
+        source: uploadedVideo ? 'video' : 'sample',
+        darkPixels,
+        componentPixels: bestComponent.pixels,
+      };
+    }
     const vectorLength = Math.max(1, Math.hypot(nearestTarget.x - body.x, nearestTarget.y - body.y));
     const nose = {
       x: clamp(body.x + ((nearestTarget.x - body.x) / vectorLength) * 14, 0, width),
@@ -1120,7 +1178,7 @@ export default function Home() {
     return holes.reduce((nearest, hole) => {
       const distanceToHole = Math.hypot(hole.x - point.x, hole.y - point.y);
       return distanceToHole < nearest.distance ? { hole, distance: distanceToHole } : nearest;
-    }, { hole: holes[0], distance: Infinity }).hole;
+    }, { hole: holes[0] ?? null, distance: Infinity }).hole;
   }
 
   function nearestSkeleton(point: Point) {
@@ -1139,6 +1197,7 @@ export default function Home() {
 
   function addEvent(type: 'investigation' | 'escape', point: Point) {
     const hole = nearestHole(point);
+    if (!hole) return;
     updateFrameAnnotation((annotation) => ({
       ...annotation,
       events: [...annotation.events, { type, frame: currentFrame, hole: hole.id, source: 'manual' }],
@@ -1171,6 +1230,8 @@ export default function Home() {
     }
     if (toolMode === 'move-hole' || toolMode === 'target') {
       const hole = nearestHole(point);
+      if (!hole) return;
+      setSelectedWellId(hole.id);
       if (toolMode === 'target') {
         setTargetHole(hole.id);
         return;
@@ -1253,6 +1314,7 @@ export default function Home() {
       currentFrame,
       fps,
       targetHole,
+      selectedWellId,
       layers,
       roi: { platform, holes },
       holeTemplate: { scale: holeScale, rotationDegrees },
@@ -1494,13 +1556,16 @@ export default function Home() {
                   ) : null}
                   {layers.wells
                     ? holes.map((hole) => (
-                        <g className="hole-group" key={hole.id}>
-                          <circle className="hit-area" cx={hole.x} cy={hole.y} r="14" />
+                        <g
+                          className={hole.id === selectedWellId ? 'hole-group selected' : 'hole-group'}
+                          key={hole.id}
+                        >
+                          <circle className="hit-area" cx={hole.x} cy={hole.y} r={hole.radius + 7} />
                           <circle
                             className={hole.id === targetHole ? 'target-hole' : 'hole-marker'}
                             cx={hole.x}
                             cy={hole.y}
-                            r="7"
+                            r={hole.radius * 0.7}
                           />
                           <text x={hole.x + 9} y={hole.y + 3}>
                             {hole.id}
@@ -1536,6 +1601,7 @@ export default function Home() {
                     ? events.map((event, index) => {
                         const hole =
                           holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
+                        if (!hole) return null;
                         return (
                           <g
                             className={`event-pin ${event.type}`}
@@ -1718,6 +1784,40 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+
+              <div className="well-panel">
+                <div className="well-panel-heading">
+                  <h3>Wells</h3>
+                  <div className="well-panel-actions">
+                    <button onClick={addWell} type="button">
+                      Add
+                    </button>
+                    <button
+                      disabled={!selectedWell || holes.length <= 1}
+                      onClick={removeSelectedWell}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+                <div className="well-tree">
+                  {holes.map((hole) => (
+                    <button
+                      className={hole.id === selectedWellId ? 'active' : ''}
+                      key={hole.id}
+                      onClick={() => setSelectedWellId(hole.id)}
+                      type="button"
+                    >
+                      <strong>Well {hole.id}</strong>
+                      <span>
+                        X {Math.round(hole.x)}, Y {Math.round(hole.y)}
+                      </span>
+                      <span>{hole.id === targetHole ? 'Target well' : 'Editable well'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </aside>
           </div>
 
@@ -1777,11 +1877,11 @@ export default function Home() {
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <label className="control">
-              <span>Target hole</span>
+              <span>Target well</span>
               <select value={targetHole} onChange={(event) => setTargetHole(Number(event.target.value))}>
-                {Array.from({ length: 20 }, (_, index) => (
-                  <option key={index + 1} value={index + 1}>
-                    Hole {index + 1}
+                {holes.map((hole) => (
+                  <option key={hole.id} value={hole.id}>
+                    Well {hole.id}
                   </option>
                 ))}
               </select>
