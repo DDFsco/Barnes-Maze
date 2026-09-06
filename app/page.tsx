@@ -30,6 +30,7 @@ type ToolMode =
   | 'nose'
   | 'investigation'
   | 'escape';
+type ObjectPanelTab = 'mice' | 'wells' | 'events';
 type DragTarget =
   | { type: 'platform'; start: Point; origin: Platform }
   | { type: 'hole'; id: number }
@@ -445,6 +446,7 @@ export default function Home() {
   const [trackingRun, setTrackingRun] = useState<TrackingRun>(initialTrackingRun);
   const [reviewFlagsByVideo, setReviewFlagsByVideo] = useState<ReviewFlagsByVideo>({});
   const [toolMode, setToolMode] = useState<ToolMode>('select');
+  const [objectPanelTab, setObjectPanelTab] = useState<ObjectPanelTab>('mice');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
 
   const selected = samples.find((sample) => sample.id === selectedId) ?? samples[0];
@@ -1628,6 +1630,132 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="frame-status-strip" aria-label="Frame review status">
+            <section className="frame-status-card">
+              <div className="frame-status-heading">
+                <h3>Current frame</h3>
+                <span>{frameAnnotation.touched ? 'saved' : 'draft'}</span>
+              </div>
+              {selectedSkeleton ? (
+                <p>
+                  {selectedSkeleton.label} · Body {Math.round(selectedSkeleton.body.x)},{' '}
+                  {Math.round(selectedSkeleton.body.y)} · Nose {Math.round(selectedSkeleton.nose.x)},{' '}
+                  {Math.round(selectedSkeleton.nose.y)}
+                </p>
+              ) : (
+                <p>No skeleton selected</p>
+              )}
+              <small>
+                Frame events {events.length} · saved frames {savedFrameCount}
+              </small>
+            </section>
+
+            <section className={`frame-status-card ${frameAnalysis.status}`}>
+              <div className="frame-status-heading">
+                <h3>
+                  {frameAnalysis.status === 'ready'
+                    ? `${Math.round(frameAnalysis.confidence * 100)}% draft confidence`
+                    : frameAnalysis.status === 'error'
+                      ? 'Analysis needs review'
+                      : 'Frame analysis idle'}
+                </h3>
+              </div>
+              <p>{frameAnalysis.message}</p>
+              {frameAnalysis.status === 'ready' ? (
+                <small>
+                  Component {frameAnalysis.componentPixels} px / dark field{' '}
+                  {frameAnalysis.darkPixels} px
+                </small>
+              ) : null}
+              <button className="analysis-button" onClick={analyzeCurrentFrame} type="button">
+                Analyze frame
+              </button>
+            </section>
+
+            <section className={`frame-status-card ${trackingRun.status}`}>
+              <div className="frame-status-heading">
+                <h3>
+                  {trackingRun.status === 'running'
+                    ? `${Math.round(trackingPercent)}% complete`
+                    : trackingRun.status === 'done'
+                      ? `${trackingRun.saved} frames saved`
+                      : trackingRun.status === 'error'
+                        ? 'Tracking needs review'
+                        : 'Tracking idle'}
+                </h3>
+              </div>
+              <progress
+                aria-label="Tracking progress"
+                className="tracking-progress"
+                max={trackingRun.total || 100}
+                value={trackingRun.processed}
+              >
+                {Math.round(trackingPercent)}%
+              </progress>
+              <small>
+                {trackingRun.processed} / {trackingRun.total || 0} frames · {trackingRun.saved}{' '}
+                saved
+              </small>
+              <p>{trackingRun.message}</p>
+              <div className="tracking-actions">
+                <button
+                  disabled={!uploadedVideo || trackingRun.status === 'running'}
+                  onClick={trackFullVideo}
+                  type="button"
+                >
+                  Track full
+                </button>
+                <button
+                  disabled={!uploadedVideo || trackingRun.status === 'running'}
+                  onClick={trackNextFrames}
+                  type="button"
+                >
+                  Next 60
+                </button>
+                <button
+                  className="tracking-stop"
+                  disabled={trackingRun.status !== 'running'}
+                  onClick={stopTracking}
+                  type="button"
+                >
+                  Stop
+                </button>
+              </div>
+            </section>
+
+            <section className="frame-status-card">
+              <div className="frame-status-heading">
+                <h3>Review queue</h3>
+                <span>
+                  {openReviewFlags.length} open / {reviewFlags.length} total
+                </span>
+              </div>
+              <p>
+                {currentReviewFlag
+                  ? `Current frame: ${currentReviewFlag.reason.replace('-', ' ')}`
+                  : openReviewFlags.length > 0
+                    ? `Next flagged frame: ${openReviewFlags[0].frame + 1}`
+                    : 'No flagged frames'}
+              </p>
+              <div className="review-actions">
+                <button
+                  disabled={openReviewFlags.length === 0}
+                  onClick={jumpToNextFlaggedFrame}
+                  type="button"
+                >
+                  Next flagged
+                </button>
+                <button
+                  disabled={!currentReviewFlag}
+                  onClick={markCurrentFrameReviewed}
+                  type="button"
+                >
+                  Mark reviewed
+                </button>
+              </div>
+            </section>
+          </div>
+
           <div className="canvas-workspace">
             <aside className="canvas-dock canvas-dock-left" aria-label="Overlay tools and layers">
               <div className="dock-section">
@@ -1789,237 +1917,146 @@ export default function Home() {
               </div>
             </div>
 
-            <aside className="canvas-dock canvas-dock-right" aria-label="Skeleton layers">
-              <div className="annotation-summary compact-summary">
-                <h3>Current frame</h3>
-                {selectedSkeleton ? (
-                  <>
-                    <p>Selected: {selectedSkeleton.label}</p>
-                    <p>
-                      Body: {Math.round(selectedSkeleton.body.x)}, {Math.round(selectedSkeleton.body.y)}
-                    </p>
-                    <p>
-                      Nose: {Math.round(selectedSkeleton.nose.x)}, {Math.round(selectedSkeleton.nose.y)}
-                    </p>
-                  </>
-                ) : (
-                  <p>No skeleton selected</p>
-                )}
-                <p>Events: {events.length}</p>
-                <p>Status: {frameAnnotation.touched ? 'saved manual frame' : 'preset draft'}</p>
-                <p>Saved frames: {savedFrameCount}</p>
-                <button className="analysis-button" onClick={analyzeCurrentFrame} type="button">
-                  Analyze frame
-                </button>
-                <div className="tracking-actions">
-                  <button
-                    disabled={!uploadedVideo || trackingRun.status === 'running'}
-                    onClick={trackFullVideo}
-                    type="button"
-                  >
-                    Track full
-                  </button>
-                  <button
-                    disabled={!uploadedVideo || trackingRun.status === 'running'}
-                    onClick={trackNextFrames}
-                    type="button"
-                  >
-                    Next 60
-                  </button>
-                  <button
-                    className="tracking-stop"
-                    disabled={trackingRun.status !== 'running'}
-                    onClick={stopTracking}
-                    type="button"
-                  >
-                    Stop
-                  </button>
-                </div>
-                <div className={`analysis-readout ${frameAnalysis.status}`}>
-                  <strong>
-                    {frameAnalysis.status === 'ready'
-                      ? `${Math.round(frameAnalysis.confidence * 100)}% draft confidence`
-                      : frameAnalysis.status === 'error'
-                        ? 'Analysis needs review'
-                        : 'Frame analysis idle'}
-                  </strong>
-                  <span>{frameAnalysis.message}</span>
-                  {frameAnalysis.status === 'ready' ? (
-                    <span>
-                      Component {frameAnalysis.componentPixels} px / dark field{' '}
-                      {frameAnalysis.darkPixels} px
-                    </span>
-                  ) : null}
-                </div>
-                <div className={`tracking-readout ${trackingRun.status}`}>
-                  <strong>
-                    {trackingRun.status === 'running'
-                      ? `${Math.round(trackingPercent)}% complete`
-                      : trackingRun.status === 'done'
-                        ? `${trackingRun.saved} frames saved`
-                        : trackingRun.status === 'error'
-                          ? 'Tracking needs review'
-                          : 'Tracking idle'}
-                  </strong>
-                  <progress
-                    aria-label="Tracking progress"
-                    className="tracking-progress"
-                    max={trackingRun.total || 100}
-                    value={trackingRun.processed}
-                  >
-                    {Math.round(trackingPercent)}%
-                  </progress>
-                  <small>
-                    {trackingRun.processed} / {trackingRun.total || 0} frames · {trackingRun.saved}{' '}
-                    saved
-                  </small>
-                  <span>{trackingRun.message}</span>
-                </div>
-                <div className="review-queue">
-                  <div className="review-queue-heading">
-                    <strong>Review queue</strong>
-                    <span>
-                      {openReviewFlags.length} open / {reviewFlags.length} total
-                    </span>
-                  </div>
-                  <p>
-                    {currentReviewFlag
-                      ? `Current frame: ${currentReviewFlag.reason.replace('-', ' ')}`
-                      : openReviewFlags.length > 0
-                        ? `Next flagged frame: ${openReviewFlags[0].frame + 1}`
-                        : 'No flagged frames'}
-                  </p>
-                  <div className="review-actions">
+            <aside className="canvas-dock canvas-dock-right" aria-label="Overlay object lists">
+              <div className="object-panel">
+                <div className="object-tabs" role="tablist" aria-label="Overlay objects">
+                  {([
+                    ['mice', `Mice ${skeletons.length}`],
+                    ['wells', `Wells ${holes.length}`],
+                    ['events', `Events ${eventLog.length}`],
+                  ] as Array<[ObjectPanelTab, string]>).map(([tab, label]) => (
                     <button
-                      disabled={openReviewFlags.length === 0}
-                      onClick={jumpToNextFlaggedFrame}
+                      aria-selected={objectPanelTab === tab}
+                      className={objectPanelTab === tab ? 'active' : ''}
+                      key={tab}
+                      onClick={() => setObjectPanelTab(tab)}
+                      role="tab"
                       type="button"
                     >
-                      Next flagged
-                    </button>
-                    <button
-                      disabled={!currentReviewFlag}
-                      onClick={markCurrentFrameReviewed}
-                      type="button"
-                    >
-                      Mark reviewed
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="skeleton-panel">
-                <div className="skeleton-panel-heading">
-                  <h3>Mice / Skeleton</h3>
-                  <div className="skeleton-panel-actions">
-                    <button onClick={() => addSkeleton()} type="button">
-                      Add
-                    </button>
-                    <button
-                      disabled={!selectedSkeleton}
-                      onClick={removeSelectedSkeleton}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <button
-                    className="skeleton-clear-button"
-                    disabled={skeletons.length === 0 && events.length === 0}
-                    onClick={clearCurrentFrame}
-                    type="button"
-                  >
-                    Clear frame
-                  </button>
-                </div>
-                <div className="skeleton-tree">
-                  {skeletons.map((skeleton) => (
-                    <button
-                      className={skeleton.id === selectedSkeletonId ? 'active' : ''}
-                      key={skeleton.id}
-                      onClick={() => selectSkeleton(skeleton.id)}
-                      type="button"
-                    >
-                      <strong>{skeleton.label}</strong>
-                      <span>
-                        Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
-                      </span>
-                      <span>
-                        Nose {Math.round(skeleton.nose.x)}, {Math.round(skeleton.nose.y)}
-                      </span>
+                      {label}
                     </button>
                   ))}
                 </div>
-              </div>
 
-              <div className="well-panel">
-                <div className="well-panel-heading">
-                  <h3>Wells</h3>
-                  <div className="well-panel-actions">
-                    <button onClick={addWell} type="button">
-                      Add
-                    </button>
-                    <button
-                      disabled={!selectedWell || holes.length <= 1}
-                      onClick={removeSelectedWell}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-                <div className="well-tree">
-                  {holes.map((hole) => (
-                    <button
-                      className={hole.id === selectedWellId ? 'active' : ''}
-                      key={hole.id}
-                      onClick={() => setSelectedWellId(hole.id)}
-                      type="button"
-                    >
-                      <strong>Well {hole.id}</strong>
-                      <span>
-                        X {Math.round(hole.x)}, Y {Math.round(hole.y)}
-                      </span>
-                      <span>{hole.id === targetHole ? 'Target well' : 'Editable well'}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="event-panel">
-                <div className="event-panel-heading">
-                  <h3>Events</h3>
-                  <span>{eventLog.length} detected</span>
-                </div>
-                <div className="event-tree">
-                  {eventLog.length > 0 ? (
-                    eventLog.slice(0, 16).map((event) => (
+                {objectPanelTab === 'mice' ? (
+                  <section className="object-tab-panel" role="tabpanel">
+                    <div className="object-panel-heading">
+                      <h3>Mice / Skeleton</h3>
+                      <div className="object-panel-actions">
+                        <button onClick={() => addSkeleton()} type="button">
+                          Add
+                        </button>
+                        <button
+                          disabled={!selectedSkeleton}
+                          onClick={removeSelectedSkeleton}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </div>
                       <button
-                        className={
-                          currentFrame >= event.startFrame && currentFrame <= event.endFrame
-                            ? 'active'
-                            : ''
-                        }
-                        key={event.id}
-                        onClick={() => seekToFrame(event.startFrame)}
+                        className="object-clear-button"
+                        disabled={skeletons.length === 0 && events.length === 0}
+                        onClick={clearCurrentFrame}
                         type="button"
                       >
-                        <strong>
-                          {event.type === 'escape' ? 'Escape' : 'Visit'} · Well {event.hole}
-                        </strong>
-                        <span>
-                          Frame {event.startFrame + 1} · {formatSeconds(event.timeSeconds)}
-                        </span>
-                        <span>
-                          {event.source} · {event.durationSeconds.toFixed(2)} s ·{' '}
-                          {Math.round(event.confidence * 100)}%
-                        </span>
+                        Clear frame
                       </button>
-                    ))
-                  ) : (
-                    <p>No events yet</p>
-                  )}
-                </div>
+                    </div>
+                    <div className="object-tree">
+                      {skeletons.map((skeleton) => (
+                        <button
+                          className={skeleton.id === selectedSkeletonId ? 'active' : ''}
+                          key={skeleton.id}
+                          onClick={() => selectSkeleton(skeleton.id)}
+                          type="button"
+                        >
+                          <strong>{skeleton.label}</strong>
+                          <span>
+                            Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
+                          </span>
+                          <span>
+                            Nose {Math.round(skeleton.nose.x)}, {Math.round(skeleton.nose.y)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {objectPanelTab === 'wells' ? (
+                  <section className="object-tab-panel" role="tabpanel">
+                    <div className="object-panel-heading">
+                      <h3>Wells</h3>
+                      <div className="object-panel-actions">
+                        <button onClick={addWell} type="button">
+                          Add
+                        </button>
+                        <button
+                          disabled={!selectedWell || holes.length <= 1}
+                          onClick={removeSelectedWell}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                    <div className="object-tree">
+                      {holes.map((hole) => (
+                        <button
+                          className={hole.id === selectedWellId ? 'active' : ''}
+                          key={hole.id}
+                          onClick={() => setSelectedWellId(hole.id)}
+                          type="button"
+                        >
+                          <strong>Well {hole.id}</strong>
+                          <span>
+                            X {Math.round(hole.x)}, Y {Math.round(hole.y)}
+                          </span>
+                          <span>{hole.id === targetHole ? 'Target well' : 'Editable well'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {objectPanelTab === 'events' ? (
+                  <section className="object-tab-panel" role="tabpanel">
+                    <div className="object-panel-heading compact">
+                      <h3>Events</h3>
+                      <span>{eventLog.length} detected</span>
+                    </div>
+                    <div className="object-tree">
+                      {eventLog.length > 0 ? (
+                        eventLog.slice(0, 16).map((event) => (
+                          <button
+                            className={
+                              currentFrame >= event.startFrame && currentFrame <= event.endFrame
+                                ? 'active'
+                                : ''
+                            }
+                            key={event.id}
+                            onClick={() => seekToFrame(event.startFrame)}
+                            type="button"
+                          >
+                            <strong>
+                              {event.type === 'escape' ? 'Escape' : 'Visit'} · Well {event.hole}
+                            </strong>
+                            <span>
+                              Frame {event.startFrame + 1} · {formatSeconds(event.timeSeconds)}
+                            </span>
+                            <span>
+                              {event.source} · {event.durationSeconds.toFixed(2)} s ·{' '}
+                              {Math.round(event.confidence * 100)}%
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <p>No events yet</p>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </aside>
           </div>

@@ -71,13 +71,13 @@ npm run dev
    - `Nose`: click or drag the selected skeleton's nose-proxy point for the current frame.
    - `Visit`: click near a well to add a manual investigation event.
    - `Escape`: click near a well to add a manual escape event.
-7. Use the dock immediately to the right of the video window, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
-8. Use the `Wells` dock to select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic.
-9. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
-10. Click `Analyze frame` in the `Current frame` dock to run a local draft detector on the currently displayed frame. It estimates a dark mouse component inside the platform ROI, writes body/nose proxy points for the active frame, and reports draft confidence.
-11. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
-12. Use `Review queue` to inspect frames where tracking failed or confidence was low. `Next flagged` jumps to the next frame needing review; `Mark reviewed` clears the current frame from the open queue.
-13. Use the `Events` dock to inspect detected visits. Entries are generated when the nose proxy remains inside a well long enough to pass the dwell threshold; target-well visits are shown as escape events. Click an event to jump to its start frame.
+7. Use the status strip below the trial queue for current-frame coordinates, frame analysis, tracking progress, and the review queue. `Analyze frame`, `Track full`, `Next 60`, `Stop`, `Next flagged`, and `Mark reviewed` live there.
+8. Use the tabbed dock immediately to the right of the video window to switch between `Mice`, `Wells`, and `Events`.
+9. In `Mice`, select each mouse and inspect body/nose coordinates. `Add` creates another skeleton, `Remove` deletes the selected mouse overlay, and `Clear frame` clears the current frame annotations.
+10. In `Wells`, select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic.
+11. In `Events`, inspect detected visits. Entries are generated when the nose proxy remains inside a well long enough to pass the dwell threshold; target-well visits are shown as escape events. Click an event to jump to its start frame.
+12. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass.
+13. Use `Review queue` to inspect frames where tracking failed or confidence was low.
 14. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
 15. Adjust dwell-time and nose-proxy distance thresholds. Event-derived latency/error metrics update immediately when tracked points exist.
 16. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
