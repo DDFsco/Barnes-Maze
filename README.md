@@ -21,7 +21,8 @@ This is the first runnable P0 slice. It includes:
 - Browser-side current-frame extraction through a hidden canvas, with a draft dark-component detector that can seed body/nose correction points for the active frame.
 - A `Track full` pass for local MP4s, plus a shorter `Next 60` debug pass, both showing progress while storing per-frame body/nose annotations for review.
 - A review queue for failed or low-confidence frames, with controls to jump to the next flagged frame and mark reviewed corrections.
-- Draft per-trial metrics and tracking-quality indicators.
+- Draft well-visit event detection from nose proxy dwell time, with event-derived latency/error metrics when events are available.
+- Per-trial metrics and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
 - A small WebMCP-compatible agent surface for reading the selected trial and staging event thresholds.
@@ -76,11 +77,12 @@ npm run dev
 10. Click `Analyze frame` in the `Current frame` dock to run a local draft detector on the currently displayed frame. It estimates a dark mouse component inside the platform ROI, writes body/nose proxy points for the active frame, and reports draft confidence.
 11. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
 12. Use `Review queue` to inspect frames where tracking failed or confidence was low. `Next flagged` jumps to the next frame needing review; `Mark reviewed` clears the current frame from the open queue.
-13. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
-14. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
-15. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-16. Click `Download CSV` for the trial summary.
-17. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, and correction records.
+13. Use the `Events` dock to inspect detected visits. Entries are generated when the nose proxy remains inside a well long enough to pass the dwell threshold; target-well visits are shown as escape events. Click an event to jump to its start frame.
+14. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
+15. Adjust dwell-time and nose-proxy distance thresholds. Event-derived latency/error metrics update immediately when tracked points exist.
+16. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+17. Click `Download CSV` for the trial summary.
+18. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, event log, and correction records.
 
 ## Design Details
 

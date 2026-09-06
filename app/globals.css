@@ -730,21 +730,36 @@ body {
     @apply mt-3 rounded-md border border-border bg-background p-2 text-xs;
   }
 
+  .event-panel {
+    @apply mt-3 rounded-md border border-border bg-background p-2 text-xs;
+  }
+
   .canvas-dock .skeleton-panel {
     @apply mt-3;
   }
 
   .canvas-dock .annotation-summary,
+  .canvas-dock .event-panel,
   .canvas-dock .well-panel,
   .canvas-dock .skeleton-panel {
     @apply p-2 text-xs;
   }
 
+  .event-panel-heading,
   .well-panel-heading,
   .skeleton-panel-heading {
     @apply mb-2 grid gap-2;
   }
 
+  .event-panel-heading {
+    @apply grid-cols-[1fr_auto] items-start;
+  }
+
+  .event-panel-heading span {
+    @apply text-muted-foreground;
+  }
+
+  .event-panel-heading h3,
   .well-panel-heading h3,
   .skeleton-panel-heading h3 {
     @apply font-semibold;
@@ -777,16 +792,24 @@ body {
     @apply grid max-h-48 gap-2 overflow-auto pr-1;
   }
 
+  .event-tree {
+    @apply grid max-h-56 gap-2 overflow-auto pr-1;
+  }
+
+  .event-tree button,
   .well-tree button,
   .skeleton-tree button {
     @apply rounded-md border border-border bg-card p-2 text-left transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
 
+  .event-tree button.active,
   .well-tree button.active,
   .skeleton-tree button.active {
     @apply border-primary/60 bg-secondary;
   }
 
+  .event-tree strong,
+  .event-tree span,
   .well-tree strong,
   .well-tree span,
   .skeleton-tree strong,
@@ -794,9 +817,14 @@ body {
     @apply block;
   }
 
+  .event-tree span,
   .well-tree span,
   .skeleton-tree span {
     @apply mt-0.5 text-xs text-muted-foreground;
+  }
+
+  .event-tree p {
+    @apply rounded-md border border-dashed border-border p-2 text-muted-foreground;
   }
 
   .analysis-canvas {

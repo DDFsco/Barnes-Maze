@@ -51,6 +51,18 @@ type AnnotationEvent = {
   source: 'manual';
 };
 
+type EventLogEntry = {
+  id: string;
+  type: 'investigation' | 'escape';
+  source: 'manual' | 'auto';
+  hole: number;
+  startFrame: number;
+  endFrame: number;
+  timeSeconds: number;
+  durationSeconds: number;
+  confidence: number;
+};
+
 type FrameAnnotation = {
   skeletons: Skeleton[];
   selectedSkeletonId: number;
@@ -273,6 +285,115 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function nearestWell(point: Point, wells: Well[]) {
+  return wells.reduce<{ well: Well | null; distance: number }>(
+    (nearest, well) => {
+      const distance = Math.hypot(well.x - point.x, well.y - point.y);
+      return distance < nearest.distance ? { well, distance } : nearest;
+    },
+    { well: null, distance: Infinity },
+  );
+}
+
+function detectEventLog(
+  annotations: Record<string, FrameAnnotation>,
+  wells: Well[],
+  targetWell: number,
+  dwellSeconds: number,
+  fps: number,
+): EventLogEntry[] {
+  const autoEvents: EventLogEntry[] = [];
+  const manualEvents: EventLogEntry[] = [];
+  const minFrames = Math.max(1, Math.ceil(dwellSeconds * fps));
+  const sortedFrames = Object.entries(annotations)
+    .map(([frame, annotation]) => ({ frame: Number(frame), annotation }))
+    .filter(({ frame }) => Number.isFinite(frame))
+    .sort((a, b) => a.frame - b.frame);
+
+  let active:
+    | {
+        hole: number;
+        startFrame: number;
+        endFrame: number;
+        confidenceSum: number;
+        count: number;
+      }
+    | null = null;
+
+  function closeActive() {
+    if (!active) return;
+    const durationFrames = active.endFrame - active.startFrame + 1;
+    if (durationFrames >= minFrames) {
+      const type = active.hole === targetWell ? 'escape' : 'investigation';
+      autoEvents.push({
+        id: `auto-${active.hole}-${active.startFrame}-${active.endFrame}`,
+        type,
+        source: 'auto',
+        hole: active.hole,
+        startFrame: active.startFrame,
+        endFrame: active.endFrame,
+        timeSeconds: active.startFrame / fps,
+        durationSeconds: durationFrames / fps,
+        confidence: active.confidenceSum / Math.max(1, active.count),
+      });
+    }
+    active = null;
+  }
+
+  for (const { frame, annotation } of sortedFrames) {
+    for (const event of annotation.events) {
+      manualEvents.push({
+        id: `manual-${event.type}-${event.hole}-${event.frame}`,
+        type: event.type,
+        source: 'manual',
+        hole: event.hole,
+        startFrame: event.frame,
+        endFrame: event.frame,
+        timeSeconds: event.frame / fps,
+        durationSeconds: 0,
+        confidence: 1,
+      });
+    }
+
+    const skeleton = annotation.skeletons.find(
+      (candidate) => candidate.id === annotation.selectedSkeletonId,
+    ) ?? annotation.skeletons[0];
+    if (!skeleton || wells.length === 0) {
+      closeActive();
+      continue;
+    }
+
+    const nearest = nearestWell(skeleton.nose, wells);
+    const hitWell = nearest.well && nearest.distance <= Math.max(10, nearest.well.radius + 8)
+      ? nearest.well
+      : null;
+    if (!hitWell) {
+      closeActive();
+      continue;
+    }
+
+    const confidence = clamp(1 - nearest.distance / Math.max(1, hitWell.radius + 8), 0.1, 1);
+    if (active !== null && active.hole === hitWell.id && frame <= active.endFrame + 1) {
+      active.endFrame = frame;
+      active.confidenceSum += confidence;
+      active.count += 1;
+      continue;
+    }
+
+    closeActive();
+    active = {
+      hole: hitWell.id,
+      startFrame: frame,
+      endFrame: frame,
+      confidenceSum: confidence,
+      count: 1,
+    };
+  }
+
+  closeActive();
+  return [...manualEvents, ...autoEvents].sort((a, b) => a.timeSeconds - b.timeSeconds);
+}
+
 function makeSkeleton(id: number, body: Point): Skeleton {
   return {
     id,
@@ -354,9 +475,33 @@ export default function Home() {
   const currentReviewFlag = reviewFlags.find(
     (flag) => flag.frame === currentFrame && !flag.reviewed,
   );
+  const frameAnnotations = useMemo(
+    () => annotationStore[activeVideoKey] ?? {},
+    [activeVideoKey, annotationStore],
+  );
+  const eventLog = useMemo(
+    () => detectEventLog(frameAnnotations, holes, targetHole, dwell, fps),
+    [dwell, fps, frameAnnotations, holes, targetHole],
+  );
+  const activeEventPins = eventLog.filter(
+    (event) => currentFrame >= event.startFrame && currentFrame <= event.endFrame,
+  );
+  const firstTargetEvent = eventLog.find((event) => event.hole === targetHole);
+  const firstEscapeEvent = eventLog.find((event) => event.type === 'escape');
+  const primaryErrors = eventLog.filter(
+    (event) =>
+      event.type === 'investigation' &&
+      event.hole !== targetHole &&
+      event.timeSeconds <= (firstTargetEvent?.timeSeconds ?? Infinity),
+  ).length;
+  const totalErrors = eventLog.filter(
+    (event) => event.type === 'investigation' && event.hole !== targetHole,
+  ).length;
+  const derivedPrimaryLatency = firstTargetEvent?.timeSeconds ?? selected.primaryLatency;
+  const derivedTotalLatency = firstEscapeEvent?.timeSeconds ?? selected.totalLatency;
   const adjustedErrors = Math.max(
     0,
-    Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
+    eventLog.length > 0 ? totalErrors : Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
   );
   const csv = useMemo(() => {
     const rows = [
@@ -369,6 +514,7 @@ export default function Home() {
         'total_latency_seconds',
         'primary_errors',
         'total_errors',
+        'events_detected',
         'path_cm',
         'speed_cm_s',
         'target_quadrant_percent',
@@ -381,10 +527,11 @@ export default function Home() {
         sample.durationSeconds.toFixed(2),
         sample.fpsLabel,
         sample.id === selected.id ? targetHole : sample.targetHole,
-        sample.primaryLatency.toFixed(1),
-        sample.totalLatency.toFixed(1),
-        sample.primaryErrors,
+        sample.id === selected.id ? derivedPrimaryLatency.toFixed(1) : sample.primaryLatency.toFixed(1),
+        sample.id === selected.id ? derivedTotalLatency.toFixed(1) : sample.totalLatency.toFixed(1),
+        sample.id === selected.id && eventLog.length > 0 ? primaryErrors : sample.primaryErrors,
         sample.id === selected.id ? adjustedErrors : sample.totalErrors,
+        sample.id === selected.id ? eventLog.length : 0,
         sample.pathCm.toFixed(1),
         sample.speedCms.toFixed(1),
         sample.targetQuadrantPct.toFixed(1),
@@ -394,7 +541,16 @@ export default function Home() {
       ]),
     ];
     return rows.map((row) => row.join(',')).join('\n');
-  }, [adjustedErrors, corrections, selected.id, targetHole]);
+  }, [
+    adjustedErrors,
+    corrections,
+    derivedPrimaryLatency,
+    derivedTotalLatency,
+    eventLog.length,
+    primaryErrors,
+    selected.id,
+    targetHole,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -460,6 +616,7 @@ export default function Home() {
               },
               frameAnalysis,
               trackingRun,
+              eventLog,
               reviewQueue: {
                 flags: reviewFlags,
                 openCount: openReviewFlags.length,
@@ -470,9 +627,9 @@ export default function Home() {
                 failedFrames: selected.failureFrames,
               },
               metrics: {
-                primaryLatencySeconds: selected.primaryLatency,
-                totalLatencySeconds: selected.totalLatency,
-                primaryErrors: selected.primaryErrors,
+                primaryLatencySeconds: derivedPrimaryLatency,
+                totalLatencySeconds: derivedTotalLatency,
+                primaryErrors: eventLog.length > 0 ? primaryErrors : selected.primaryErrors,
                 totalErrors: adjustedErrors,
                 pathCm: selected.pathCm,
                 speedCmPerSecond: selected.speedCms,
@@ -494,6 +651,9 @@ export default function Home() {
     currentFrame,
     distance,
     dwell,
+    derivedPrimaryLatency,
+    derivedTotalLatency,
+    eventLog,
     events,
     holes,
     holeScale,
@@ -511,6 +671,7 @@ export default function Home() {
     reviewFlags,
     openReviewFlags.length,
     currentReviewFlag,
+    primaryErrors,
     trackingRun,
   ]);
 
@@ -1326,6 +1487,13 @@ export default function Home() {
       },
       frameAnalysis,
       trackingRun,
+      eventLog,
+      derivedMetrics: {
+        primaryLatencySeconds: derivedPrimaryLatency,
+        totalLatencySeconds: derivedTotalLatency,
+        primaryErrors: eventLog.length > 0 ? primaryErrors : selected.primaryErrors,
+        totalErrors: adjustedErrors,
+      },
       reviewQueue: {
         flags: reviewFlags,
         openCount: openReviewFlags.length,
@@ -1598,14 +1766,13 @@ export default function Home() {
                       ))
                     : null}
                   {layers.events
-                    ? events.map((event, index) => {
-                        const hole =
-                          holes.find((candidate) => candidate.id === event.hole) ?? holes[0];
+                    ? activeEventPins.map((event) => {
+                        const hole = holes.find((candidate) => candidate.id === event.hole);
                         if (!hole) return null;
                         return (
                           <g
                             className={`event-pin ${event.type}`}
-                            key={`${event.type}-${event.frame}-${index}`}
+                            key={event.id}
                           >
                             <Crosshair x={hole.x - 5} y={hole.y - 5} size={10} />
                           </g>
@@ -1818,6 +1985,42 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+
+              <div className="event-panel">
+                <div className="event-panel-heading">
+                  <h3>Events</h3>
+                  <span>{eventLog.length} detected</span>
+                </div>
+                <div className="event-tree">
+                  {eventLog.length > 0 ? (
+                    eventLog.slice(0, 16).map((event) => (
+                      <button
+                        className={
+                          currentFrame >= event.startFrame && currentFrame <= event.endFrame
+                            ? 'active'
+                            : ''
+                        }
+                        key={event.id}
+                        onClick={() => seekToFrame(event.startFrame)}
+                        type="button"
+                      >
+                        <strong>
+                          {event.type === 'escape' ? 'Escape' : 'Visit'} · Well {event.hole}
+                        </strong>
+                        <span>
+                          Frame {event.startFrame + 1} · {formatSeconds(event.timeSeconds)}
+                        </span>
+                        <span>
+                          {event.source} · {event.durationSeconds.toFixed(2)} s ·{' '}
+                          {Math.round(event.confidence * 100)}%
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p>No events yet</p>
+                  )}
+                </div>
+              </div>
             </aside>
           </div>
 
@@ -1983,14 +2186,18 @@ export default function Home() {
         <aside className="panel order-3">
           <div className="panel-heading">
             <h2>Results</h2>
-            <span>draft metrics</span>
+            <span>{eventLog.length > 0 ? 'event-derived' : 'draft metrics'}</span>
           </div>
 
           <div className="metric-grid">
-            <Metric label="Primary latency" value={`${selected.primaryLatency.toFixed(1)} s`} />
-            <Metric label="Total latency" value={`${selected.totalLatency.toFixed(1)} s`} />
-            <Metric label="Primary errors" value={String(selected.primaryErrors)} />
+            <Metric label="Primary latency" value={`${derivedPrimaryLatency.toFixed(1)} s`} />
+            <Metric label="Total latency" value={`${derivedTotalLatency.toFixed(1)} s`} />
+            <Metric
+              label="Primary errors"
+              value={String(eventLog.length > 0 ? primaryErrors : selected.primaryErrors)}
+            />
             <Metric label="Total errors" value={String(adjustedErrors)} />
+            <Metric label="Events" value={String(eventLog.length)} />
             <Metric label="Path length" value={`${selected.pathCm.toFixed(1)} cm`} />
             <Metric label="Speed" value={`${selected.speedCms.toFixed(1)} cm/s`} />
           </div>
