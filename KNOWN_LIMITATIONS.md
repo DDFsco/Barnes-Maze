@@ -1,6 +1,7 @@
 # Known Limitations
 
-- This slice can load and play local MP4 files, extract frames into canvas, and run a bounded 60-frame browser-side tracking pass, but it does not yet run full-trial tracking.
+- This slice can load and play local MP4 files, extract frames into canvas, and run a full-video browser-side draft tracking pass.
+- Full-video tracking is sequential browser seeking, so long videos may take time and should remain reviewable rather than treated as final ground truth.
 - The current-frame detector uses classical dark-component analysis inside the aligned platform ROI; it is a review aid, not a trained pose-estimation model.
 - The overlay can be aligned over a local video, rotated, scaled, adjusted per well, and used for layer-based body/nose/event annotations.
 - Metrics are draft placeholder outputs based on inspected sample metadata and plausible trial summaries, not validated ground truth.

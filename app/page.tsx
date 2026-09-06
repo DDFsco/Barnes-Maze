@@ -916,7 +916,7 @@ export default function Home() {
     }));
   }
 
-  async function trackNextFrames() {
+  async function trackFrameRange(maxFrames: number, label: string) {
     const video = videoRef.current;
     if (!uploadedVideo || !video) {
       setTrackingRun({
@@ -933,7 +933,7 @@ export default function Home() {
     video.pause();
     setIsPlaying(false);
     const startFrame = currentFrame;
-    const framesToTrack = Math.min(60, totalFrames - startFrame);
+    const framesToTrack = Math.min(maxFrames, totalFrames - startFrame);
     const trackedFrames: Record<string, FrameAnnotation> = {};
     let processed = 0;
     let saved = 0;
@@ -943,7 +943,7 @@ export default function Home() {
       processed: 0,
       total: framesToTrack,
       saved: 0,
-      message: `Tracking frames ${startFrame + 1}-${startFrame + framesToTrack}`,
+      message: `${label}: frames ${startFrame + 1}-${startFrame + framesToTrack}`,
     });
 
     try {
@@ -979,7 +979,7 @@ export default function Home() {
             processed,
             total: framesToTrack,
             saved,
-            message: `Tracking frame ${frame + 1}`,
+            message: `${label}: frame ${frame + 1}`,
           });
         }
       }
@@ -1000,7 +1000,7 @@ export default function Home() {
         saved,
         message: stopTrackingRef.current
           ? `Stopped after saving ${saved} frames`
-          : `Saved ${saved} draft frame annotations`,
+          : `${label} saved ${saved} draft frame annotations`,
       });
     } catch (error) {
       setTrackingRun({
@@ -1011,6 +1011,14 @@ export default function Home() {
         message: error instanceof Error ? error.message : 'Tracking pass failed',
       });
     }
+  }
+
+  function trackNextFrames() {
+    void trackFrameRange(60, 'Short pass');
+  }
+
+  function trackFullVideo() {
+    void trackFrameRange(totalFrames - currentFrame, 'Full video');
   }
 
   function toggleLayer(layer: keyof LayerVisibility) {
@@ -1496,12 +1504,20 @@ export default function Home() {
                 <div className="tracking-actions">
                   <button
                     disabled={!uploadedVideo || trackingRun.status === 'running'}
+                    onClick={trackFullVideo}
+                    type="button"
+                  >
+                    Track full
+                  </button>
+                  <button
+                    disabled={!uploadedVideo || trackingRun.status === 'running'}
                     onClick={trackNextFrames}
                     type="button"
                   >
-                    Track next 60
+                    Next 60
                   </button>
                   <button
+                    className="tracking-stop"
                     disabled={trackingRun.status !== 'running'}
                     onClick={stopTracking}
                     type="button"

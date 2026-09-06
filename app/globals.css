@@ -625,6 +625,10 @@ body {
     @apply cursor-not-allowed opacity-45 hover:bg-card;
   }
 
+  .tracking-actions .tracking-stop {
+    @apply col-span-2;
+  }
+
   .analysis-readout {
     @apply mt-2 grid gap-1 rounded-md border border-border bg-muted/40 p-2 text-xs;
   }

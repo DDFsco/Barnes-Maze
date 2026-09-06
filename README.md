@@ -19,7 +19,7 @@ This is the first runnable P0 slice. It includes:
 - Live ROI controls for platform center/radius, well-ring scale, well-map rotation, draggable individual wells, target selection, and mouse body/nose proxy corrections.
 - Frame-level manual annotation records for mouse skeletons and visit/escape events, persisted locally in browser storage.
 - Browser-side current-frame extraction through a hidden canvas, with a draft dark-component detector that can seed body/nose correction points for the active frame.
-- A bounded `Track next 60` pass for local MP4s that seeks through the next 60 frames, shows progress, runs the draft detector, and stores per-frame body/nose annotations for review.
+- A `Track full` pass for local MP4s, plus a shorter `Next 60` debug pass, both showing progress while storing per-frame body/nose annotations for review.
 - Draft per-trial metrics and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
@@ -72,7 +72,7 @@ npm run dev
 7. Use the dock immediately to the right of the video window, `Mice / Skeleton`, to select each mouse and inspect its body/nose coordinates.
 8. Click `Remove` in the `Mice / Skeleton` dock to delete the currently selected mouse overlay.
 9. Click `Analyze frame` in the `Current frame` dock to run a local draft detector on the currently displayed frame. It estimates a dark mouse component inside the platform ROI, writes body/nose proxy points for the active frame, and reports draft confidence.
-10. After loading a real MP4, click `Track next 60` to automatically seek through the next 60 frames and save draft body/nose annotations for each detected frame. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
+10. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass. The tracking panel shows percent complete, processed frames, saved frames, and the current tracking message. Use `Stop` to end the pass early.
 11. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
 12. Adjust dwell-time and nose-proxy distance thresholds. The draft total-error count updates immediately.
 13. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
@@ -109,4 +109,4 @@ npm run build
 
 ## Known Submission Gaps
 
-This is not yet a complete take-home submission. The next implementation steps are automatic platform/hole registration, whole-trial browser CV tracking, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.
+This is not yet a complete take-home submission. The next implementation steps are automatic platform/hole registration, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.
