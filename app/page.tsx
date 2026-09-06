@@ -78,6 +78,13 @@ type TrackingRun = {
   message: string;
 };
 
+type ReviewFlag = {
+  frame: number;
+  reason: 'low-confidence' | 'no-detection';
+  confidence: number;
+  reviewed: boolean;
+};
+
 type LayerVisibility = {
   maze: boolean;
   wells: boolean;
@@ -117,6 +124,8 @@ type UploadedVideo = {
   width: number;
   height: number;
 };
+
+type ReviewFlagsByVideo = Record<string, ReviewFlag[]>;
 
 const samples: SampleVideo[] = [
   {
@@ -307,6 +316,7 @@ export default function Home() {
   });
   const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis>(initialAnalysis);
   const [trackingRun, setTrackingRun] = useState<TrackingRun>(initialTrackingRun);
+  const [reviewFlagsByVideo, setReviewFlagsByVideo] = useState<ReviewFlagsByVideo>({});
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
 
@@ -329,6 +339,14 @@ export default function Home() {
   ).length;
   const trackingPercent =
     trackingRun.total > 0 ? clamp((trackingRun.processed / trackingRun.total) * 100, 0, 100) : 0;
+  const reviewFlags = useMemo(
+    () => reviewFlagsByVideo[activeVideoKey] ?? [],
+    [activeVideoKey, reviewFlagsByVideo],
+  );
+  const openReviewFlags = reviewFlags.filter((flag) => !flag.reviewed);
+  const currentReviewFlag = reviewFlags.find(
+    (flag) => flag.frame === currentFrame && !flag.reviewed,
+  );
   const adjustedErrors = Math.max(
     0,
     Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
@@ -434,6 +452,11 @@ export default function Home() {
               },
               frameAnalysis,
               trackingRun,
+              reviewQueue: {
+                flags: reviewFlags,
+                openCount: openReviewFlags.length,
+                currentFrameFlag: currentReviewFlag ?? null,
+              },
               quality: {
                 trackedPercent: selected.trackedPct,
                 failedFrames: selected.failureFrames,
@@ -476,6 +499,9 @@ export default function Home() {
     targetHole,
     frameAnnotation.touched,
     frameAnalysis,
+    reviewFlags,
+    openReviewFlags.length,
+    currentReviewFlag,
     trackingRun,
   ]);
 
@@ -492,6 +518,7 @@ export default function Home() {
     setToolMode('select');
     setFrameAnalysis(initialAnalysis);
     setTrackingRun(initialTrackingRun);
+    setReviewFlagsByVideo((current) => ({ ...current, [sample.id]: current[sample.id] ?? [] }));
   }
 
   function loadVideo(file: File) {
@@ -916,6 +943,31 @@ export default function Home() {
     }));
   }
 
+  function mergeReviewFlags(existing: ReviewFlag[], incoming: ReviewFlag[]) {
+    const byFrame = new Map(existing.map((flag) => [flag.frame, flag]));
+    for (const flag of incoming) {
+      byFrame.set(flag.frame, { ...byFrame.get(flag.frame), ...flag });
+    }
+    return Array.from(byFrame.values()).sort((a, b) => a.frame - b.frame);
+  }
+
+  function markCurrentFrameReviewed() {
+    if (!currentReviewFlag) return;
+    setReviewFlagsByVideo((current) => ({
+      ...current,
+      [activeVideoKey]: (current[activeVideoKey] ?? []).map((flag) =>
+        flag.frame === currentFrame ? { ...flag, reviewed: true } : flag,
+      ),
+    }));
+  }
+
+  function jumpToNextFlaggedFrame() {
+    const nextFlag =
+      openReviewFlags.find((flag) => flag.frame > currentFrame) ?? openReviewFlags[0];
+    if (!nextFlag) return;
+    seekToFrame(nextFlag.frame);
+  }
+
   async function trackFrameRange(maxFrames: number, label: string) {
     const video = videoRef.current;
     if (!uploadedVideo || !video) {
@@ -935,6 +987,7 @@ export default function Home() {
     const startFrame = currentFrame;
     const framesToTrack = Math.min(maxFrames, totalFrames - startFrame);
     const trackedFrames: Record<string, FrameAnnotation> = {};
+    const nextReviewFlags: ReviewFlag[] = [];
     let processed = 0;
     let saved = 0;
 
@@ -971,6 +1024,21 @@ export default function Home() {
           };
           saved += 1;
           setFrameAnalysis(result);
+          if (result.confidence < 0.35) {
+            nextReviewFlags.push({
+              frame,
+              reason: 'low-confidence',
+              confidence: result.confidence,
+              reviewed: false,
+            });
+          }
+        } else {
+          nextReviewFlags.push({
+            frame,
+            reason: 'no-detection',
+            confidence: 0,
+            reviewed: false,
+          });
         }
         if (offset % 5 === 0 || offset === framesToTrack - 1) {
           setCurrentTime(time);
@@ -990,6 +1058,10 @@ export default function Home() {
           ...current[activeVideoKey],
           ...trackedFrames,
         },
+      }));
+      setReviewFlagsByVideo((current) => ({
+        ...current,
+        [activeVideoKey]: mergeReviewFlags(current[activeVideoKey] ?? [], nextReviewFlags),
       }));
       setLayers((current) => ({ ...current, skeletons: true }));
       setCorrections((value) => value + saved);
@@ -1192,6 +1264,11 @@ export default function Home() {
       },
       frameAnalysis,
       trackingRun,
+      reviewQueue: {
+        flags: reviewFlags,
+        openCount: openReviewFlags.length,
+        currentFrameFlag: currentReviewFlag ?? null,
+      },
       thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
       source: 'BarnesAI annotation surface state',
     },
@@ -1564,6 +1641,37 @@ export default function Home() {
                     saved
                   </small>
                   <span>{trackingRun.message}</span>
+                </div>
+                <div className="review-queue">
+                  <div className="review-queue-heading">
+                    <strong>Review queue</strong>
+                    <span>
+                      {openReviewFlags.length} open / {reviewFlags.length} total
+                    </span>
+                  </div>
+                  <p>
+                    {currentReviewFlag
+                      ? `Current frame: ${currentReviewFlag.reason.replace('-', ' ')}`
+                      : openReviewFlags.length > 0
+                        ? `Next flagged frame: ${openReviewFlags[0].frame + 1}`
+                        : 'No flagged frames'}
+                  </p>
+                  <div className="review-actions">
+                    <button
+                      disabled={openReviewFlags.length === 0}
+                      onClick={jumpToNextFlaggedFrame}
+                      type="button"
+                    >
+                      Next flagged
+                    </button>
+                    <button
+                      disabled={!currentReviewFlag}
+                      onClick={markCurrentFrameReviewed}
+                      type="button"
+                    >
+                      Mark reviewed
+                    </button>
+                  </div>
                 </div>
               </div>
 
