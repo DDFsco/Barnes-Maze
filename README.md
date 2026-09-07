@@ -16,13 +16,14 @@ This is the first runnable P0 slice. It includes:
 - Video underlay with an interactive SVG annotation overlay.
 - Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
 - Editable target-well and detection-threshold controls.
-- Live ROI controls for platform center/radius, well-ring scale, well-map rotation, addable/removable wells, draggable individual wells, target selection, and mouse body/nose proxy corrections.
+- Live ROI controls for platform center/radius, real-world platform diameter, well-ring scale, well-map rotation, addable/removable wells, draggable individual wells, per-well radius, target selection, and mouse body/nose proxy corrections.
 - Frame-level manual annotation records for mouse skeletons and visit/escape events, persisted locally in browser storage.
 - Browser-side current-frame extraction through a hidden canvas, with a draft dark-component detector that can seed body/nose correction points for the active frame.
 - A `Track full` pass for local MP4s, plus a shorter `Next 60` debug pass, both showing progress while storing per-frame body/nose annotations for review.
 - A review queue for failed or low-confidence frames, with controls to jump to the next flagged frame and mark reviewed corrections.
 - Draft well-visit event detection from nose proxy dwell time, with event-derived latency/error metrics when events are available.
-- Per-trial metrics and tracking-quality indicators.
+- Trajectory-derived path length, speed, target-quadrant occupancy, and draft search-strategy classification with a visible manual override.
+- Per-trial metrics, per-event detail, and tracking-quality indicators.
 - Manual correction count tracking.
 - CSV and JSON downloads from the browser.
 - A small WebMCP-compatible agent surface for reading the selected trial and staging event thresholds.
@@ -74,15 +75,16 @@ npm run dev
 7. Use the status strip below the trial queue for current-frame coordinates, frame analysis, tracking progress, and the review queue. `Analyze frame`, `Track full`, `Next 60`, `Stop`, `Next flagged`, and `Mark reviewed` live there.
 8. Use the tabbed dock immediately to the right of the video window to switch between `Mice`, `Wells`, and `Events`.
 9. In `Mice`, select each mouse and inspect body/nose coordinates. `Add` creates another skeleton, `Remove` deletes the selected mouse overlay, and `Clear frame` clears the current frame annotations.
-10. In `Wells`, select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic.
+10. In `Wells`, select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic. Use `Selected radius` to resize the selected well marker/detection region.
 11. In `Events`, inspect detected visits. Entries are generated when the nose proxy remains inside a well long enough to pass the dwell threshold; target-well visits are shown as escape events. Click an event to jump to its start frame.
 12. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass.
 13. Use `Review queue` to inspect frames where tracking failed or confidence was low.
 14. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
 15. Adjust dwell-time and nose-proxy distance thresholds. Event-derived latency/error metrics update immediately when tracked points exist.
-16. Use platform X/Y, radius, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-17. Click `Download CSV` for the trial summary.
-18. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, event log, and correction records.
+16. Use platform X/Y, radius, platform diameter, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
+17. Review the Results panel. `Auto` assigns a draft spatial/serial/random search strategy from event order and trajectory context; choose a manual strategy if the automatic label is not defensible.
+18. Click `Summary CSV` for the trial summary or `Event CSV` for per-event details.
+19. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, event log, derived metrics, and correction records.
 
 ## Design Details
 
@@ -114,4 +116,4 @@ npm run build
 
 ## Known Submission Gaps
 
-This is not yet a complete take-home submission. The next implementation steps are automatic platform/hole registration, event review, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.
+This is not yet a complete take-home submission. The next implementation steps are automatic platform/hole registration, trajectory smoothing/outlier controls, richer quality visualizations, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.

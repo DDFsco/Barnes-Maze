@@ -31,6 +31,7 @@ type ToolMode =
   | 'investigation'
   | 'escape';
 type ObjectPanelTab = 'mice' | 'wells' | 'events';
+type SearchStrategy = 'spatial' | 'serial' | 'random';
 type DragTarget =
   | { type: 'platform'; start: Point; origin: Platform }
   | { type: 'hole'; id: number }
@@ -62,6 +63,12 @@ type EventLogEntry = {
   timeSeconds: number;
   durationSeconds: number;
   confidence: number;
+};
+
+type TrajectoryPoint = Point & {
+  frame: number;
+  timeSeconds: number;
+  valid: boolean;
 };
 
 type FrameAnnotation = {
@@ -264,6 +271,12 @@ function formatSeconds(value: number) {
   return `${minutes}:${seconds}`;
 }
 
+function csvEscape(value: string | number | null) {
+  if (value === null) return '';
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
 function buildWellPoints(platform: Platform, scale: number, rotationDegrees = 0, count = 20): Well[] {
   return Array.from({ length: count }, (_, index) => {
     const angle =
@@ -284,6 +297,10 @@ function buildHolePoints(platform: Platform, scale: number, rotationDegrees = 0)
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function angleDelta(a: number, b: number) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
 
 function nearestWell(point: Point, wells: Well[]) {
@@ -395,6 +412,103 @@ function detectEventLog(
   return [...manualEvents, ...autoEvents].sort((a, b) => a.timeSeconds - b.timeSeconds);
 }
 
+function buildTrajectory(
+  annotations: Record<string, FrameAnnotation>,
+  fps: number,
+): TrajectoryPoint[] {
+  return Object.entries(annotations)
+    .map(([frame, annotation]) => {
+      const frameNumber = Number(frame);
+      const skeleton =
+        annotation.skeletons.find((candidate) => candidate.id === annotation.selectedSkeletonId) ??
+        annotation.skeletons[0];
+      return {
+        frame: frameNumber,
+        timeSeconds: frameNumber / fps,
+        x: skeleton?.body.x ?? 0,
+        y: skeleton?.body.y ?? 0,
+        valid: Number.isFinite(frameNumber) && Boolean(skeleton),
+      };
+    })
+    .filter((point) => Number.isFinite(point.frame))
+    .sort((a, b) => a.frame - b.frame);
+}
+
+function pathLengthCm(points: TrajectoryPoint[], pixelsPerCm: number) {
+  if (points.length < 2 || pixelsPerCm <= 0) return null;
+  let totalPixels = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    if (!previous.valid || !current.valid) continue;
+    totalPixels += Math.hypot(current.x - previous.x, current.y - previous.y);
+  }
+  return totalPixels > 0 ? totalPixels / pixelsPerCm : null;
+}
+
+function targetQuadrantPercent(points: TrajectoryPoint[], platform: Platform, targetWell: Well | null) {
+  const validPoints = points.filter((point) => point.valid);
+  if (validPoints.length === 0 || !targetWell) return null;
+  const targetAngle = Math.atan2(targetWell.y - platform.y, targetWell.x - platform.x);
+  const inQuadrant = validPoints.filter((point) => {
+    const pointAngle = Math.atan2(point.y - platform.y, point.x - platform.x);
+    return Math.abs(angleDelta(pointAngle, targetAngle)) <= Math.PI / 4;
+  }).length;
+  return (inQuadrant / validPoints.length) * 100;
+}
+
+function classifySearchStrategy(
+  events: EventLogEntry[],
+  targetWell: number,
+  wellCount: number,
+  primaryErrors: number,
+  quadrantPercent: number | null,
+): { label: SearchStrategy | null; reason: string } {
+  if (events.length === 0) {
+    return { label: null, reason: 'No visit or escape events have been detected yet.' };
+  }
+
+  const firstTargetTime = events.find((event) => event.hole === targetWell)?.timeSeconds ?? null;
+  const investigationHoles = events
+    .filter((event) => event.type === 'investigation')
+    .map((event) => event.hole);
+  const enoughSerialEvidence = investigationHoles.length >= 3 && wellCount > 2;
+  const serialSteps = investigationHoles.slice(1).filter((hole, index) => {
+    const previous = investigationHoles[index];
+    const clockwise = (previous % wellCount) + 1;
+    const counterClockwise = ((previous + wellCount - 2) % wellCount) + 1;
+    return hole === clockwise || hole === counterClockwise;
+  }).length;
+  const serialScore =
+    investigationHoles.length > 1 ? serialSteps / Math.max(1, investigationHoles.length - 1) : 0;
+
+  if (
+    firstTargetTime !== null &&
+    primaryErrors <= 2 &&
+    (quadrantPercent === null || quadrantPercent >= 35)
+  ) {
+    return {
+      label: 'spatial',
+      reason:
+        'The animal reaches the target with few non-target investigations, consistent with direct spatial search.',
+    };
+  }
+
+  if (enoughSerialEvidence && serialScore >= 0.65) {
+    return {
+      label: 'serial',
+      reason:
+        'Most non-target investigations progress through adjacent wells, consistent with ring-following search.',
+    };
+  }
+
+  return {
+    label: 'random',
+    reason:
+      'The visit order is not strongly direct or adjacent-well serial, so the draft classification is random.',
+  };
+}
+
 function makeSkeleton(id: number, body: Point): Skeleton {
   return {
     id,
@@ -424,6 +538,8 @@ export default function Home() {
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
   const [dwell, setDwell] = useState(0.5);
   const [distance, setDistance] = useState(1.8);
+  const [platformDiameterCm, setPlatformDiameterCm] = useState(91);
+  const [strategyOverride, setStrategyOverride] = useState<'auto' | SearchStrategy>('auto');
   const [corrections, setCorrections] = useState(1);
   const [uploadedVideo, setUploadedVideo] = useState<UploadedVideo | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -485,6 +601,11 @@ export default function Home() {
     () => detectEventLog(frameAnnotations, holes, targetHole, dwell, fps),
     [dwell, fps, frameAnnotations, holes, targetHole],
   );
+  const trajectory = useMemo(
+    () => buildTrajectory(frameAnnotations, fps),
+    [fps, frameAnnotations],
+  );
+  const validTrajectory = trajectory.filter((point) => point.valid);
   const activeEventPins = eventLog.filter(
     (event) => currentFrame >= event.startFrame && currentFrame <= event.endFrame,
   );
@@ -507,6 +628,26 @@ export default function Home() {
     0,
     hasDerivedResults ? totalErrors : 0,
   );
+  const pixelsPerCm = platformDiameterCm > 0 ? (platform.r * 2) / platformDiameterCm : 0;
+  const derivedPathCm = pathLengthCm(trajectory, pixelsPerCm);
+  const trajectoryDurationSeconds =
+    validTrajectory.length >= 2
+      ? (validTrajectory[validTrajectory.length - 1].frame - validTrajectory[0].frame) / fps
+      : null;
+  const derivedSpeedCms =
+    derivedPathCm !== null && trajectoryDurationSeconds !== null && trajectoryDurationSeconds > 0
+      ? derivedPathCm / trajectoryDurationSeconds
+      : null;
+  const targetWell = holes.find((hole) => hole.id === targetHole) ?? null;
+  const derivedTargetQuadrantPct = targetQuadrantPercent(trajectory, platform, targetWell);
+  const autoStrategy = classifySearchStrategy(
+    eventLog,
+    targetHole,
+    holes.length,
+    primaryErrors,
+    derivedTargetQuadrantPct,
+  );
+  const finalStrategy = strategyOverride === 'auto' ? autoStrategy.label : strategyOverride;
   const resultTrackedPercent =
     hasTrackingSummary ? (trackingRun.saved / Math.max(1, trackingRun.total)) * 100 : null;
   const csv = useMemo(() => {
@@ -528,37 +669,72 @@ export default function Home() {
         'tracked_percent',
         'manual_corrections',
       ],
-      ...samples.map((sample) => [
-        sample.fileName,
-        sample.durationSeconds.toFixed(2),
-        sample.fpsLabel,
-        sample.id === selected.id ? targetHole : sample.targetHole,
-        sample.id === selected.id && derivedPrimaryLatency !== null ? derivedPrimaryLatency.toFixed(1) : '',
-        sample.id === selected.id && derivedTotalLatency !== null ? derivedTotalLatency.toFixed(1) : '',
-        sample.id === selected.id && hasDerivedResults ? primaryErrors : '',
-        sample.id === selected.id && hasDerivedResults ? adjustedErrors : '',
-        sample.id === selected.id ? eventLog.length : 0,
-        '',
-        '',
-        '',
-        '',
-        sample.id === selected.id && resultTrackedPercent !== null ? resultTrackedPercent.toFixed(1) : '',
-        sample.id === selected.id ? corrections : 0,
-      ]),
+      [
+        activeLabel,
+        activeDuration.toFixed(2),
+        fps.toFixed(3),
+        targetHole,
+        derivedPrimaryLatency !== null ? derivedPrimaryLatency.toFixed(1) : '',
+        derivedTotalLatency !== null ? derivedTotalLatency.toFixed(1) : '',
+        hasDerivedResults ? primaryErrors : '',
+        hasDerivedResults ? adjustedErrors : '',
+        eventLog.length,
+        derivedPathCm !== null ? derivedPathCm.toFixed(1) : '',
+        derivedSpeedCms !== null ? derivedSpeedCms.toFixed(2) : '',
+        derivedTargetQuadrantPct !== null ? derivedTargetQuadrantPct.toFixed(1) : '',
+        finalStrategy ?? '',
+        resultTrackedPercent !== null ? resultTrackedPercent.toFixed(1) : '',
+        corrections,
+      ],
     ];
-    return rows.map((row) => row.join(',')).join('\n');
+    return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
   }, [
+    activeDuration,
+    activeLabel,
     adjustedErrors,
     corrections,
+    derivedPathCm,
     derivedPrimaryLatency,
+    derivedSpeedCms,
+    derivedTargetQuadrantPct,
     derivedTotalLatency,
     eventLog.length,
+    finalStrategy,
+    fps,
     hasDerivedResults,
     primaryErrors,
     resultTrackedPercent,
-    selected.id,
     targetHole,
   ]);
+  const eventCsv = useMemo(() => {
+    const rows = [
+      [
+        'video',
+        'event_id',
+        'event_type',
+        'source',
+        'well',
+        'start_frame',
+        'end_frame',
+        'time_seconds',
+        'duration_seconds',
+        'confidence',
+      ],
+      ...eventLog.map((event) => [
+        activeLabel,
+        event.id,
+        event.type,
+        event.source,
+        event.hole,
+        event.startFrame + 1,
+        event.endFrame + 1,
+        event.timeSeconds.toFixed(3),
+        event.durationSeconds.toFixed(3),
+        event.confidence.toFixed(3),
+      ]),
+    ];
+    return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  }, [activeLabel, eventLog]);
 
   useEffect(() => {
     return () => {
@@ -611,7 +787,12 @@ export default function Home() {
               currentFrame,
               targetHole,
               selectedWellId,
-              thresholds: { dwellSeconds: dwell, noseProxyDistanceCm: distance },
+              thresholds: {
+                dwellSeconds: dwell,
+                noseProxyDistanceCm: distance,
+                platformDiameterCm,
+                pixelsPerCm,
+              },
               layers,
               roi: { platform, holes, holeScale, rotationDegrees },
               corrections: {
@@ -639,10 +820,12 @@ export default function Home() {
                 totalLatencySeconds: derivedTotalLatency,
                 primaryErrors: hasDerivedResults ? primaryErrors : null,
                 totalErrors: hasDerivedResults ? adjustedErrors : null,
-                pathCm: null,
-                speedCmPerSecond: null,
-                targetQuadrantPercent: null,
-                strategy: null,
+                pathCm: derivedPathCm,
+                speedCmPerSecond: derivedSpeedCms,
+                targetQuadrantPercent: derivedTargetQuadrantPct,
+                strategy: finalStrategy,
+                strategySource: strategyOverride === 'auto' ? 'auto' : 'manual',
+                strategyReason: autoStrategy.reason,
               },
             };
           },
@@ -659,10 +842,14 @@ export default function Home() {
     currentFrame,
     distance,
     dwell,
+    derivedPathCm,
     derivedPrimaryLatency,
+    derivedSpeedCms,
+    derivedTargetQuadrantPct,
     derivedTotalLatency,
     eventLog,
     events,
+    finalStrategy,
     hasDerivedResults,
     holes,
     holeScale,
@@ -680,8 +867,12 @@ export default function Home() {
     reviewFlags,
     openReviewFlags.length,
     currentReviewFlag,
+    platformDiameterCm,
+    pixelsPerCm,
     primaryErrors,
     resultTrackedPercent,
+    strategyOverride,
+    autoStrategy.reason,
     trackingRun,
   ]);
 
@@ -695,6 +886,7 @@ export default function Home() {
     setHoleScale(0.92);
     setRotationDegrees(0);
     setFps(sample.fpsValue);
+    setStrategyOverride('auto');
     setCurrentTime(0);
     setToolMode('select');
     setFrameAnalysis(initialAnalysis);
@@ -714,6 +906,7 @@ export default function Home() {
     });
     setCurrentTime(0);
     setIsPlaying(false);
+    setStrategyOverride('auto');
     setFrameAnalysis({ ...initialAnalysis, source: 'video' });
     setTrackingRun(initialTrackingRun);
     if (previousUrl) URL.revokeObjectURL(previousUrl);
@@ -1518,8 +1711,12 @@ export default function Home() {
         totalLatencySeconds: derivedTotalLatency,
         primaryErrors: hasDerivedResults ? primaryErrors : null,
         totalErrors: hasDerivedResults ? adjustedErrors : null,
-        pathCm: null,
-        speedCmPerSecond: null,
+        pathCm: derivedPathCm,
+        speedCmPerSecond: derivedSpeedCms,
+        targetQuadrantPercent: derivedTargetQuadrantPct,
+        strategy: finalStrategy,
+        strategyOverride,
+        strategyReason: autoStrategy.reason,
         trackedPercent: resultTrackedPercent,
       },
       reviewQueue: {
@@ -1527,7 +1724,12 @@ export default function Home() {
         openCount: openReviewFlags.length,
         currentFrameFlag: currentReviewFlag ?? null,
       },
-      thresholds: { dwellSeconds: dwell, noseDistanceCm: distance },
+      thresholds: {
+        dwellSeconds: dwell,
+        noseDistanceCm: distance,
+        platformDiameterCm,
+        pixelsPerCm,
+      },
       source: 'BarnesAI annotation surface state',
     },
     null,
@@ -2147,7 +2349,7 @@ export default function Home() {
             />
           </label>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
             <label className="control">
               <span>Target well</span>
               <select value={targetHole} onChange={(event) => setTargetHole(Number(event.target.value))}>
@@ -2178,6 +2380,17 @@ export default function Home() {
                 step="0.1"
                 type="range"
                 value={distance}
+              />
+            </label>
+            <label className="control">
+              <span>Platform diameter: {platformDiameterCm.toFixed(0)} cm</span>
+              <input
+                max="140"
+                min="50"
+                onChange={(event) => setPlatformDiameterCm(Number(event.target.value))}
+                step="1"
+                type="range"
+                value={platformDiameterCm}
               />
             </label>
           </div>
@@ -2276,8 +2489,22 @@ export default function Home() {
                   value={hasDerivedResults ? String(adjustedErrors) : 'Not generated'}
                 />
                 <Metric label="Events" value={String(eventLog.length)} />
-                <Metric label="Path length" value="Not generated" />
-                <Metric label="Speed" value="Not generated" />
+                <Metric
+                  label="Path length"
+                  value={derivedPathCm !== null ? `${derivedPathCm.toFixed(1)} cm` : 'Not generated'}
+                />
+                <Metric
+                  label="Speed"
+                  value={derivedSpeedCms !== null ? `${derivedSpeedCms.toFixed(2)} cm/s` : 'Not generated'}
+                />
+                <Metric
+                  label="Target quadrant"
+                  value={
+                    derivedTargetQuadrantPct !== null
+                      ? `${derivedTargetQuadrantPct.toFixed(1)}%`
+                      : 'Not generated'
+                  }
+                />
               </div>
 
               <div className="result-notes">
@@ -2319,21 +2546,41 @@ export default function Home() {
                     type="button"
                   >
                     <Download size={16} aria-hidden="true" />
-                    Download CSV
+                    Summary CSV
+                  </button>
+                  <button
+                    className="wide-action"
+                    disabled={eventLog.length === 0}
+                    onClick={() => download(eventCsv, 'barnesai-event-detail.csv', 'text/csv')}
+                    type="button"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Event CSV
                   </button>
                 </div>
               </div>
             </div>
 
-            {hasDerivedResults ? (
-              <div className="strategy">
-                <strong>Event-derived metrics</strong>
-                <span>
-                  Latency and errors are derived from detected well visits. Path length,
-                  speed, and search strategy still need computed tracking metrics.
-                </span>
+            <div className="strategy">
+              <div className="strategy-heading">
+                <strong>Search strategy</strong>
+                <select
+                  aria-label="Search strategy override"
+                  onChange={(event) => setStrategyOverride(event.target.value as 'auto' | SearchStrategy)}
+                  value={strategyOverride}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="spatial">Spatial</option>
+                  <option value="serial">Serial</option>
+                  <option value="random">Random</option>
+                </select>
               </div>
-            ) : null}
+              <span>
+                {finalStrategy
+                  ? `${finalStrategy} · ${autoStrategy.reason}`
+                  : autoStrategy.reason}
+              </span>
+            </div>
           </section>
         </section>
 

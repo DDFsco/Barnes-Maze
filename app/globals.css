@@ -629,7 +629,7 @@ body {
   }
 
   .metric-grid {
-    @apply grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7;
+    @apply grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8;
   }
 
   .metric {
@@ -677,6 +677,10 @@ body {
     @apply mt-0;
   }
 
+  .result-actions .wide-action:disabled {
+    @apply cursor-not-allowed opacity-45;
+  }
+
   .compact-summary {
     @apply mt-0;
   }
@@ -701,6 +705,18 @@ body {
 
   .strategy strong {
     @apply mb-1 block capitalize;
+  }
+
+  .strategy-heading {
+    @apply mb-2 flex items-center justify-between gap-3;
+  }
+
+  .strategy-heading strong {
+    @apply mb-0;
+  }
+
+  .strategy-heading select {
+    @apply h-8 rounded-md border border-input bg-card px-2 text-xs font-semibold;
   }
 
   .annotation-summary h3 {
