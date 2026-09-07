@@ -786,7 +786,13 @@ export default function Home() {
   function updateHoleTemplate(nextScale: number, nextRotation: number) {
     setHoleScale(nextScale);
     setRotationDegrees(nextRotation);
-    setHoles(buildWellPoints(platform, nextScale, nextRotation, Math.max(1, holes.length)));
+    const currentRadii = new Map(holes.map((hole) => [hole.id, hole.radius]));
+    setHoles(
+      buildWellPoints(platform, nextScale, nextRotation, Math.max(1, holes.length)).map((hole) => ({
+        ...hole,
+        radius: currentRadii.get(hole.id) ?? hole.radius,
+      })),
+    );
   }
 
   function resetRoi() {
@@ -885,6 +891,15 @@ export default function Home() {
     setHoles((current) => [...current, nextWell]);
     setSelectedWellId(nextId);
     setLayers((current) => ({ ...current, wells: true }));
+  }
+
+  function updateSelectedWellRadius(radius: number) {
+    if (!selectedWell) return;
+    setHoles((current) =>
+      current.map((hole) =>
+        hole.id === selectedWell.id ? { ...hole, radius: clamp(radius, 4, 28) } : hole,
+      ),
+    );
   }
 
   function removeSelectedWell() {
@@ -2003,6 +2018,20 @@ export default function Home() {
                         </button>
                       </div>
                     </div>
+                    <label className="object-range-control">
+                      <span>
+                        Selected radius
+                        <strong>{selectedWell ? `${Math.round(selectedWell.radius)} px` : 'None'}</strong>
+                      </span>
+                      <input
+                        disabled={!selectedWell}
+                        max="28"
+                        min="4"
+                        onChange={(event) => updateSelectedWellRadius(Number(event.target.value))}
+                        type="range"
+                        value={selectedWell?.radius ?? 10}
+                      />
+                    </label>
                     <div className="object-tree">
                       {holes.map((hole) => (
                         <button
@@ -2015,6 +2044,7 @@ export default function Home() {
                           <span>
                             X {Math.round(hole.x)}, Y {Math.round(hole.y)}
                           </span>
+                          <span>Radius {Math.round(hole.radius)} px</span>
                           <span>{hole.id === targetHole ? 'Target well' : 'Editable well'}</span>
                         </button>
                       ))}
