@@ -9,7 +9,7 @@
 - Path length, speed, target-quadrant occupancy, and search strategy are now computed from draft body trajectories and event order, but they still require human review before being treated as validated ground truth.
 - Nose position is shown as a `nose_proxy`; it is not a trained pose-estimation result.
 - Manual skeleton/event annotations are stored per frame in local browser storage and included in JSON export, but they are not yet persisted through IndexedDB or synced across browsers.
-- Trial-summary CSV and per-event CSV export work; XLSX export is still pending.
+- Trial-summary, event-detail, and cohort-summary exports are available as CSV; trial and cohort reports are also available as XLSX.
 - Larger browser persistence through IndexedDB is pending.
 - The app has not yet been tested on a real 2019-era laptop or at 200% zoom.
 - WebMCP tools are registered opportunistically when the browser provides `document.modelContext`; no supported validation context was available during this local pass.

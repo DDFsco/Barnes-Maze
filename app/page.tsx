@@ -16,6 +16,7 @@ import {
   Save,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createXlsxWorkbook, type WorkbookSheet } from '@/lib/xlsx';
 
 type Point = { x: number; y: number };
 type Platform = Point & { r: number };
@@ -30,6 +31,9 @@ type SettingsSnapshot = {
   holes: Well[];
   holeScale: number;
   rotationDegrees: number;
+  smoothingWindow: number;
+  maxGapFrames: number;
+  outlierDistancePx: number;
 };
 type SettingsPreset = {
   id: number;
@@ -184,6 +188,14 @@ type SessionResult = {
   speedCms: number | null;
   targetQuadrantPct: number | null;
   strategy: SearchStrategy | null;
+  dwellThresholdSeconds: number;
+  noseProxyDistanceCm: number;
+  platformDiameterCm: number;
+  wellCount: number;
+  analysisVersion: string;
+  smoothingWindow: number;
+  maxGapFrames: number;
+  outlierDistancePx: number;
 };
 
 type ReviewFlagsByVideo = Record<string, ReviewFlag[]>;
@@ -365,6 +377,7 @@ function detectEventLog(
   targetWell: number,
   dwellSeconds: number,
   fps: number,
+  reviewFlags: ReviewFlag[] = [],
 ): EventLogEntry[] {
   const autoEvents: EventLogEntry[] = [];
   const manualEvents: EventLogEntry[] = [];
@@ -390,11 +403,9 @@ function detectEventLog(
     if (!active) return;
     const durationFrames = active.endFrame - active.startFrame + 1;
     if (durationFrames >= minFrames) {
-      const isTerminal = active.hole === targetWell && !terminalReached;
-      const type = isTerminal ? 'escape' : 'investigation';
       autoEvents.push({
         id: `auto-${active.hole}-${active.startFrame}-${active.endFrame}`,
-        type,
+        type: 'investigation',
         source: 'auto',
         hole: active.hole,
         startFrame: active.startFrame,
@@ -403,9 +414,8 @@ function detectEventLog(
         durationSeconds: durationFrames / fps,
         confidence: active.confidenceSum / Math.max(1, active.count),
         detectionConfidence: active.detectionConfidenceSum / Math.max(1, active.count),
-        terminal: isTerminal,
+        terminal: false,
       });
-      if (isTerminal) terminalReached = true;
     }
     active = null;
   }
@@ -471,6 +481,42 @@ function detectEventLog(
   }
 
   closeActive();
+  const hasManualEscape = manualEvents.some((event) => event.type === 'escape');
+  if (!hasManualEscape) {
+    const missingFrames = new Set(
+      reviewFlags
+        // An open no-detection flag is evidence for a possible escape. Once a
+        // reviewer clears it, do not retain an automatic escape claim.
+        .filter((flag) => flag.reason === 'no-detection' && !flag.reviewed)
+        .map((flag) => flag.frame),
+    );
+    const requiredMissingFrames = Math.max(3, Math.ceil(fps * 0.25));
+    const targetInvestigations = autoEvents.filter(
+      (event) => event.type === 'investigation' && event.hole === targetWell,
+    );
+    const targetEvent = targetInvestigations[targetInvestigations.length - 1];
+    if (targetEvent) {
+      let consecutiveMissing = 0;
+      for (let frame = targetEvent.endFrame + 1; missingFrames.has(frame); frame += 1) {
+        consecutiveMissing += 1;
+      }
+      if (consecutiveMissing >= requiredMissingFrames) {
+        autoEvents.push({
+          id: `auto-escape-${targetEvent.endFrame}`,
+          type: 'escape',
+          source: 'auto',
+          hole: targetWell,
+          startFrame: targetEvent.endFrame,
+          endFrame: targetEvent.endFrame + consecutiveMissing,
+          timeSeconds: targetEvent.endFrame / fps,
+          durationSeconds: consecutiveMissing / fps,
+          confidence: clamp(targetEvent.confidence * 0.72, 0.2, 0.78),
+          detectionConfidence: 0,
+          terminal: true,
+        });
+      }
+    }
+  }
   return [...manualEvents, ...autoEvents].sort((a, b) => a.timeSeconds - b.timeSeconds);
 }
 
@@ -494,6 +540,60 @@ function buildTrajectory(
     })
     .filter((point) => Number.isFinite(point.frame))
     .sort((a, b) => a.frame - b.frame);
+}
+
+function processTrajectory(
+  points: TrajectoryPoint[],
+  smoothingWindow: number,
+  maxGapFrames: number,
+  outlierDistancePx: number,
+) {
+  const result: TrajectoryPoint[] = [];
+  let previous: TrajectoryPoint | null = null;
+  for (const point of points) {
+    if (!point.valid) {
+      result.push(point);
+      previous = null;
+      continue;
+    }
+    if (previous) {
+      const frameGap = point.frame - previous.frame;
+      const distance = Math.hypot(point.x - previous.x, point.y - previous.y);
+      if (distance > outlierDistancePx) {
+        result.push({ ...point, valid: false });
+        previous = null;
+        continue;
+      }
+      if (frameGap > 1 && frameGap <= maxGapFrames + 1) {
+        for (let frame = previous.frame + 1; frame < point.frame; frame += 1) {
+          const ratio = (frame - previous.frame) / frameGap;
+          result.push({
+            frame,
+            timeSeconds: previous.timeSeconds + (point.timeSeconds - previous.timeSeconds) * ratio,
+            x: previous.x + (point.x - previous.x) * ratio,
+            y: previous.y + (point.y - previous.y) * ratio,
+            valid: true,
+          });
+        }
+      } else if (frameGap > maxGapFrames + 1) {
+        result.push({ ...previous, frame: previous.frame + 0.5, valid: false });
+      }
+    }
+    result.push(point);
+    previous = point;
+  }
+  if (smoothingWindow === 0) return result;
+  return result.map((point, index) => {
+    if (!point.valid) return point;
+    const nearby = result.slice(Math.max(0, index - smoothingWindow), index + smoothingWindow + 1)
+      .filter((candidate) => candidate.valid && Math.abs(candidate.frame - point.frame) <= smoothingWindow);
+    if (nearby.length < 2) return point;
+    return {
+      ...point,
+      x: nearby.reduce((sum, candidate) => sum + candidate.x, 0) / nearby.length,
+      y: nearby.reduce((sum, candidate) => sum + candidate.y, 0) / nearby.length,
+    };
+  });
 }
 
 function pathLengthCm(points: TrajectoryPoint[], pixelsPerCm: number) {
@@ -589,8 +689,46 @@ function makeFrameAnnotation(body: Point): FrameAnnotation {
   };
 }
 
+function parseCsvValue(value: string) {
+  return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) ? Number(value) : value;
+}
+
+function parseCsv(csv: string) {
+  const rows: Array<Array<string | number>> = [[]];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < csv.length; index += 1) {
+    const character = csv[index];
+    if (character === '"') {
+      if (quoted && csv[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (character === ',' && !quoted) {
+      rows[rows.length - 1].push(parseCsvValue(value));
+      value = '';
+      continue;
+    }
+    if (character === '\n' && !quoted) {
+      rows[rows.length - 1].push(parseCsvValue(value));
+      rows.push([]);
+      value = '';
+      continue;
+    }
+    if (character !== '\r') value += character;
+  }
+  rows[rows.length - 1].push(parseCsvValue(value));
+  return rows.filter((row) => row.length > 1 || row[0] !== '');
+}
+
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const projectInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const uploadedVideosRef = useRef<UploadedVideo[]>([]);
   const frameImageRef = useRef<HTMLImageElement | null>(null);
@@ -608,6 +746,9 @@ export default function Home() {
   const [uploadedVideos, setUploadedVideos] = useState<UploadedVideo[]>([]);
   const [activeUploadedVideoId, setActiveUploadedVideoId] = useState<string | null>(null);
   const [sessionResults, setSessionResults] = useState<Record<string, SessionResult>>({});
+  const [workspaceSettingsByVideo, setWorkspaceSettingsByVideo] = useState<Record<string, SettingsSnapshot>>({});
+  const [trackingRunsByVideo, setTrackingRunsByVideo] = useState<Record<string, TrackingRun>>({});
+  const [projectNotice, setProjectNotice] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -617,6 +758,9 @@ export default function Home() {
   const [selectedWellId, setSelectedWellId] = useState(samples[0].targetHole);
   const [holeScale, setHoleScale] = useState(0.92);
   const [rotationDegrees, setRotationDegrees] = useState(0);
+  const [smoothingWindow, setSmoothingWindow] = useState(0);
+  const [maxGapFrames, setMaxGapFrames] = useState(0);
+  const [outlierDistancePx, setOutlierDistancePx] = useState(90);
   const [annotationStore, setAnnotationStore] = useState<AnnotationStore>({});
   const [hasLoadedLocalAnnotations, setHasLoadedLocalAnnotations] = useState(false);
   const [layers, setLayers] = useState<LayerVisibility>({
@@ -676,14 +820,38 @@ export default function Home() {
     [activeVideoKey, annotationStore],
   );
   const eventLog = useMemo(
-    () => detectEventLog(frameAnnotations, holes, targetHole, dwell, fps),
-    [dwell, fps, frameAnnotations, holes, targetHole],
+    () => detectEventLog(frameAnnotations, holes, targetHole, dwell, fps, reviewFlags),
+    [dwell, fps, frameAnnotations, holes, reviewFlags, targetHole],
   );
   const trajectory = useMemo(
     () => buildTrajectory(frameAnnotations, fps),
     [fps, frameAnnotations],
   );
-  const validTrajectory = trajectory.filter((point) => point.valid);
+  const processedTrajectory = useMemo(
+    () => processTrajectory(trajectory, smoothingWindow, maxGapFrames, outlierDistancePx),
+    [maxGapFrames, outlierDistancePx, smoothingWindow, trajectory],
+  );
+  const validTrajectory = processedTrajectory.filter((point) => point.valid);
+  const trajectoryPath = validTrajectory
+    .filter((point) => point.frame <= currentFrame)
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ');
+  const occupancyCells = useMemo(() => {
+    const columns = 12;
+    const rows = 9;
+    const counts = new Map<string, number>();
+    validTrajectory.forEach((point) => {
+      const column = clamp(Math.floor((point.x / 640) * columns), 0, columns - 1);
+      const row = clamp(Math.floor((point.y / 480) * rows), 0, rows - 1);
+      const key = `${column}:${row}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    const maxCount = Math.max(1, ...counts.values());
+    return Array.from(counts, ([key, count]) => {
+      const [column, row] = key.split(':').map(Number);
+      return { column, row, opacity: 0.18 + (count / maxCount) * 0.82 };
+    });
+  }, [validTrajectory]);
   const activeEventPins = eventLog.filter(
     (event) => currentFrame >= event.startFrame && currentFrame <= event.endFrame,
   );
@@ -707,7 +875,7 @@ export default function Home() {
     hasDerivedResults ? totalErrors : 0,
   );
   const pixelsPerCm = platformDiameterCm > 0 ? (platform.r * 2) / platformDiameterCm : 0;
-  const derivedPathCm = pathLengthCm(trajectory, pixelsPerCm);
+  const derivedPathCm = pathLengthCm(processedTrajectory, pixelsPerCm);
   const trajectoryDurationSeconds =
     validTrajectory.length >= 2
       ? (validTrajectory[validTrajectory.length - 1].frame - validTrajectory[0].frame) / fps
@@ -717,7 +885,7 @@ export default function Home() {
       ? derivedPathCm / trajectoryDurationSeconds
       : null;
   const targetWell = holes.find((hole) => hole.id === targetHole) ?? null;
-  const derivedTargetQuadrantPct = targetQuadrantPercent(trajectory, platform, targetWell);
+  const derivedTargetQuadrantPct = targetQuadrantPercent(processedTrajectory, platform, targetWell);
   const autoStrategy = classifySearchStrategy(
     eventLog,
     targetHole,
@@ -726,6 +894,47 @@ export default function Home() {
     derivedTargetQuadrantPct,
   );
   const finalStrategy = strategyOverride === 'auto' ? autoStrategy.label : strategyOverride;
+  const sessionResultsWithCurrentSettings = useMemo(() => {
+    const result = sessionResults[activeVideoKey];
+    if (!uploadedVideo || !result) return sessionResults;
+    return {
+      ...sessionResults,
+      [activeVideoKey]: {
+        ...result,
+        pathCm: derivedPathCm,
+        speedCms: derivedSpeedCms,
+        targetQuadrantPct: derivedTargetQuadrantPct,
+        flagsOpen: openReviewFlags.length,
+        primaryLatency: derivedPrimaryLatency,
+        totalLatency: derivedTotalLatency,
+        primaryErrors: hasDerivedResults ? primaryErrors : null,
+        totalErrors: hasDerivedResults ? adjustedErrors : null,
+        events: eventLog.length,
+        strategy: finalStrategy,
+        smoothingWindow,
+        maxGapFrames,
+        outlierDistancePx,
+      },
+    };
+  }, [
+    activeVideoKey,
+    adjustedErrors,
+    derivedPathCm,
+    derivedPrimaryLatency,
+    derivedSpeedCms,
+    derivedTotalLatency,
+    derivedTargetQuadrantPct,
+    eventLog.length,
+    finalStrategy,
+    hasDerivedResults,
+    maxGapFrames,
+    openReviewFlags.length,
+    outlierDistancePx,
+    primaryErrors,
+    sessionResults,
+    smoothingWindow,
+    uploadedVideo,
+  ]);
   const processedPercent =
     hasTrackingSummary ? (trackingRun.processed / Math.max(1, trackingRun.total)) * 100 : null;
   const lowConfidenceFlags = reviewFlags.filter((flag) => flag.reason === 'low-confidence').length;
@@ -758,6 +967,11 @@ export default function Home() {
         'no_detection_flags',
         'reviewed_flags',
         'manual_corrections',
+        'dwell_threshold_seconds',
+        'nose_proxy_distance_cm',
+        'platform_diameter_cm',
+        'well_count',
+        'analysis_version',
       ],
       [
         activeLabel,
@@ -783,6 +997,11 @@ export default function Home() {
         trackingRun.total > 0 ? noDetectionFlags : '',
         trackingRun.total > 0 ? reviewedFlags : '',
         corrections,
+        dwell.toFixed(2),
+        distance.toFixed(2),
+        platformDiameterCm.toFixed(1),
+        holes.length,
+        'classical-cv-v1',
       ],
     ];
     return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
@@ -796,17 +1015,21 @@ export default function Home() {
     derivedSpeedCms,
     derivedTargetQuadrantPct,
     derivedTotalLatency,
+    distance,
+    dwell,
     eventLog.length,
     frameCountSource,
     finalStrategy,
     fps,
     highConfidenceAnnotations,
+    holes.length,
     hasDerivedResults,
     lowConfidenceFlags,
     noDetectionFlags,
     primaryErrors,
     processedPercent,
     reviewedFlags,
+    platformDiameterCm,
     targetHole,
     totalFrames,
     trackingRun.processed,
@@ -876,8 +1099,16 @@ export default function Home() {
         'speed_cm_s',
         'target_quadrant_percent',
         'strategy',
+        'dwell_threshold_seconds',
+        'nose_proxy_distance_cm',
+        'platform_diameter_cm',
+        'well_count',
+        'analysis_version',
+        'smoothing_window_frames',
+        'max_gap_fill_frames',
+        'outlier_distance_px',
       ],
-      ...Object.values(sessionResults).map((result) => [
+      ...Object.values(sessionResultsWithCurrentSettings).map((result) => [
         result.video,
         result.status,
         result.durationSeconds.toFixed(2),
@@ -895,10 +1126,18 @@ export default function Home() {
         result.speedCms?.toFixed(3) ?? '',
         result.targetQuadrantPct?.toFixed(3) ?? '',
         result.strategy ?? '',
+        result.dwellThresholdSeconds?.toFixed(2) ?? '',
+        result.noseProxyDistanceCm?.toFixed(2) ?? '',
+        result.platformDiameterCm?.toFixed(1) ?? '',
+        result.wellCount ?? '',
+        result.analysisVersion ?? '',
+        result.smoothingWindow ?? '',
+        result.maxGapFrames ?? '',
+        result.outlierDistancePx ?? '',
       ]),
     ];
     return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
-  }, [sessionResults]);
+  }, [sessionResultsWithCurrentSettings]);
 
   function createSettingsSnapshot(): SettingsSnapshot {
     return {
@@ -911,6 +1150,9 @@ export default function Home() {
       holes: holes.map((hole) => ({ ...hole })),
       holeScale,
       rotationDegrees,
+      smoothingWindow,
+      maxGapFrames,
+      outlierDistancePx,
     };
   }
 
@@ -932,6 +1174,9 @@ export default function Home() {
     setHoles(nextHoles);
     setHoleScale(settings.holeScale);
     setRotationDegrees(settings.rotationDegrees);
+    setSmoothingWindow(settings.smoothingWindow ?? 0);
+    setMaxGapFrames(settings.maxGapFrames ?? 0);
+    setOutlierDistancePx(settings.outlierDistancePx ?? 90);
   }
 
   function persistSettingsPresets(presets: SettingsPreset[], activePresetId: number | null) {
@@ -1171,27 +1416,82 @@ export default function Home() {
     setIsPlaying(false);
     setStrategyOverride('auto');
     setFrameAnalysis({ ...initialAnalysis, source: 'video' });
-    setTrackingRun(initialTrackingRun);
-    applyActiveSettingsPreset();
   }
 
   function selectUploadedVideo(video: UploadedVideo) {
+    if (uploadedVideo) {
+      setWorkspaceSettingsByVideo((current) => ({ ...current, [activeVideoKey]: createSettingsSnapshot() }));
+      setTrackingRunsByVideo((current) => ({ ...current, [activeVideoKey]: trackingRun }));
+    }
+    const nextKey = `local:${video.id}`;
     setActiveUploadedVideoId(video.id);
     resetForLocalVideo();
+    const savedSettings = workspaceSettingsByVideo[nextKey];
+    if (savedSettings) {
+      applySettingsSnapshot(savedSettings);
+    } else {
+      applyActiveSettingsPreset();
+    }
+    setTrackingRun(trackingRunsByVideo[nextKey] ?? initialTrackingRun);
   }
 
   function loadVideos(files: FileList | File[]) {
-    const nextVideos = Array.from(files).map((file, index) => ({
-      id: `${file.name}-${file.size}-${file.lastModified}-${index}-${Date.now()}`,
+    const knownIds = new Set(uploadedVideos.map((video) => video.id));
+    const nextVideos = Array.from(files)
+      .filter((file) => file.type.startsWith('video/') && !knownIds.has(`${file.name}-${file.size}-${file.lastModified}`))
+      .map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}`,
       name: file.name,
       url: URL.createObjectURL(file),
       durationSeconds: 0,
       width: 640,
       height: 480,
-    }));
-    if (nextVideos.length === 0) return;
+      }));
+    if (nextVideos.length === 0) {
+      setProjectNotice('No new video files were added.');
+      return;
+    }
     setUploadedVideos((current) => [...current, ...nextVideos]);
     selectUploadedVideo(nextVideos[0]);
+    setProjectNotice(`${nextVideos.length} video${nextVideos.length === 1 ? '' : 's'} added to this session.`);
+  }
+
+  function loadProject(file: File) {
+    const reader = new FileReader();
+    reader.onerror = () => setProjectNotice('Unable to read that project file.');
+    reader.onload = () => {
+      try {
+        if (typeof reader.result !== 'string') throw new Error('Project file is not text');
+        const project = JSON.parse(reader.result) as {
+          schemaVersion?: number;
+          annotationStore?: AnnotationStore;
+          reviewFlagsByVideo?: ReviewFlagsByVideo;
+          sessionResults?: Record<string, SessionResult>;
+          workspaceSettingsByVideo?: Record<string, SettingsSnapshot>;
+          trackingRunsByVideo?: Record<string, TrackingRun>;
+          settings?: SettingsSnapshot;
+          strategyOverride?: 'auto' | SearchStrategy;
+          corrections?: number;
+          layers?: LayerVisibility;
+        };
+        if (project.schemaVersion !== 2 || !project.settings || !project.annotationStore) {
+          throw new Error('Unsupported project file');
+        }
+        applySettingsSnapshot(project.settings);
+        setAnnotationStore(project.annotationStore);
+        setReviewFlagsByVideo(project.reviewFlagsByVideo ?? {});
+        setSessionResults(project.sessionResults ?? {});
+        setWorkspaceSettingsByVideo(project.workspaceSettingsByVideo ?? {});
+        setTrackingRunsByVideo(project.trackingRunsByVideo ?? {});
+        setStrategyOverride(project.strategyOverride ?? 'auto');
+        setCorrections(project.corrections ?? 0);
+        setLayers(project.layers ?? { maze: true, wells: true, skeletons: true, events: true });
+        setProjectNotice('Project restored. Add the same video files to reconnect their annotations.');
+      } catch {
+        setProjectNotice('This file is not a compatible BarnesAI project.');
+      }
+    };
+    reader.readAsText(file);
   }
 
   function seekToFrame(frame: number) {
@@ -1803,8 +2103,20 @@ export default function Home() {
       }));
       const combinedAnnotations = { ...frameAnnotations, ...trackedFrames };
       const combinedFlags = mergeReviewFlags(reviewFlags, nextReviewFlags);
-      const completedEvents = detectEventLog(combinedAnnotations, holes, targetHole, dwell, fps);
-      const completedTrajectory = buildTrajectory(combinedAnnotations, fps);
+      const completedEvents = detectEventLog(
+        combinedAnnotations,
+        holes,
+        targetHole,
+        dwell,
+        fps,
+        combinedFlags,
+      );
+      const completedTrajectory = processTrajectory(
+        buildTrajectory(combinedAnnotations, fps),
+        smoothingWindow,
+        maxGapFrames,
+        outlierDistancePx,
+      );
       const completedPathCm = pathLengthCm(completedTrajectory, pixelsPerCm);
       const completedValidTrajectory = completedTrajectory.filter((point) => point.valid);
       const completedDuration =
@@ -1866,6 +2178,14 @@ export default function Home() {
           speedCms: completedSpeed,
           targetQuadrantPct: completedTargetQuadrant,
           strategy: completedStrategy,
+          dwellThresholdSeconds: dwell,
+          noseProxyDistanceCm: distance,
+          platformDiameterCm,
+          wellCount: holes.length,
+          analysisVersion: 'classical-cv-v1',
+          smoothingWindow,
+          maxGapFrames,
+          outlierDistancePx,
         },
       }));
       setLayers((current) => ({ ...current, skeletons: true }));
@@ -1903,6 +2223,21 @@ export default function Home() {
 
   function download(text: string, fileName: string, type: string) {
     const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadWorkbook(sheets: WorkbookSheet[], fileName: string) {
+    const workbook = createXlsxWorkbook(sheets);
+    const contents = new ArrayBuffer(workbook.byteLength);
+    new Uint8Array(contents).set(workbook);
+    const blob = new Blob([contents], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -2060,53 +2395,30 @@ export default function Home() {
 
   const projectJson = JSON.stringify(
     {
-      video: activeLabel,
-      currentTimeSeconds: currentTime,
-      currentFrame,
-      fps,
-      targetHole,
-      selectedWellId,
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      localVideos: uploadedVideos.map(({ id, name, durationSeconds, width, height }) => ({
+        id,
+        name,
+        durationSeconds,
+        width,
+        height,
+      })),
+      activeVideo: activeLabel,
+      settings: createSettingsSnapshot(),
       layers,
-      roi: { platform, holes },
-      holeTemplate: { scale: holeScale, rotationDegrees },
-      correctionLayer: {
-        currentFrame: { skeletons, selectedSkeletonId, events, touched: frameAnnotation.touched },
-        frameAnnotations: annotationStore[activeVideoKey] ?? {},
-        savedFrameCount,
-        correctionCount: corrections,
-      },
-      frameAnalysis,
-      trackingRun,
-      eventLog,
-      derivedMetrics: {
-        primaryLatencySeconds: derivedPrimaryLatency,
-        totalLatencySeconds: derivedTotalLatency,
-        primaryErrors: hasDerivedResults ? primaryErrors : null,
-        totalErrors: hasDerivedResults ? adjustedErrors : null,
-        pathCm: derivedPathCm,
-        speedCmPerSecond: derivedSpeedCms,
-        targetQuadrantPercent: derivedTargetQuadrantPct,
-        strategy: finalStrategy,
-        strategyOverride,
-        strategyReason: autoStrategy.reason,
-        processingPercent: processedPercent,
-        highConfidenceAnnotations,
-        lowConfidenceFlags,
-        noDetectionFlags,
-        reviewedFlags,
-      },
-      reviewQueue: {
-        flags: reviewFlags,
-        openCount: openReviewFlags.length,
-        currentFrameFlag: currentReviewFlag ?? null,
-      },
-      thresholds: {
-        dwellSeconds: dwell,
-        noseDistanceCm: distance,
-        platformDiameterCm,
-        pixelsPerCm,
-      },
-      source: 'BarnesAI annotation surface state',
+      annotationStore,
+      reviewFlagsByVideo,
+      sessionResults: sessionResultsWithCurrentSettings,
+      workspaceSettingsByVideo: uploadedVideo
+        ? { ...workspaceSettingsByVideo, [activeVideoKey]: createSettingsSnapshot() }
+        : workspaceSettingsByVideo,
+      trackingRunsByVideo: uploadedVideo
+        ? { ...trackingRunsByVideo, [activeVideoKey]: trackingRun }
+        : trackingRunsByVideo,
+      strategyOverride,
+      corrections,
+      source: 'BarnesAI project state',
     },
     null,
     2,
@@ -2139,6 +2451,31 @@ export default function Home() {
               ref={fileInputRef}
               type="file"
             />
+            <input
+              accept="video/mp4,video/*"
+              className="sr-only"
+              multiple
+              onChange={(event) => {
+                if (event.target.files) loadVideos(event.target.files);
+                event.currentTarget.value = '';
+              }}
+              ref={(node) => {
+                folderInputRef.current = node;
+                node?.setAttribute('webkitdirectory', '');
+              }}
+              type="file"
+            />
+            <input
+              accept="application/json,.json"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) loadProject(file);
+                event.currentTarget.value = '';
+              }}
+              ref={projectInputRef}
+              type="file"
+            />
             <button
               className="tool-button"
               onClick={() => fileInputRef.current?.click()}
@@ -2146,6 +2483,22 @@ export default function Home() {
             >
               <FolderOpen size={16} aria-hidden="true" />
               Add videos
+            </button>
+            <button
+              className="tool-button"
+              onClick={() => folderInputRef.current?.click()}
+              type="button"
+            >
+              <FolderOpen size={16} aria-hidden="true" />
+              Add folder
+            </button>
+            <button
+              className="tool-button"
+              onClick={() => projectInputRef.current?.click()}
+              type="button"
+            >
+              <FileJson size={16} aria-hidden="true" />
+              Open project
             </button>
             <button className="tool-button primary" onClick={togglePlayback} type="button">
               {isPlaying ? <Pause size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
@@ -2175,7 +2528,11 @@ export default function Home() {
               <button
                 aria-label="Export project JSON"
                 onClick={() =>
-                  download(projectJson, `${selected.id}-barnesai-project.json`, 'application/json')
+                  download(
+                    projectJson,
+                    `${activeVideoKey.replaceAll(':', '-')}-barnesai-project.json`,
+                    'application/json',
+                  )
                 }
                 type="button"
               >
@@ -2184,9 +2541,17 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="trial-strip" aria-label="Session videos">
+          <div
+            className="trial-strip"
+            aria-label="Session videos"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              loadVideos(event.dataTransfer.files);
+            }}
+          >
             {uploadedVideos.map((video) => {
-              const result = sessionResults[`local:${video.id}`];
+              const result = sessionResultsWithCurrentSettings[`local:${video.id}`];
               return (
                 <button
                   aria-label={`Select local video ${video.name}`}
@@ -2238,6 +2603,7 @@ export default function Home() {
                 </span>
               ))}
             </div>
+            {projectNotice ? <small className="session-notice">{projectNotice}</small> : null}
           </div>
 
           <div className="frame-status-strip" aria-label="Frame review status">
@@ -2464,7 +2830,10 @@ export default function Home() {
                       ))
                     : null}
                   {layers.skeletons
-                    ? skeletons.map((skeleton) => (
+                    ? (
+                      <>
+                        {trajectoryPath ? <polyline className="trajectory-path" points={trajectoryPath} /> : null}
+                        {skeletons.map((skeleton) => (
                         <g
                           className={
                             skeleton.id === selectedSkeletonId
@@ -2485,7 +2854,9 @@ export default function Home() {
                           <circle className="hit-area" cx={skeleton.nose.x} cy={skeleton.nose.y} r="11" />
                           <circle className="nose-point" cx={skeleton.nose.x} cy={skeleton.nose.y} r="4" />
                         </g>
-                      ))
+                        ))}
+                      </>
+                    )
                     : null}
                   {layers.events
                     ? activeEventPins.map((event) => {
@@ -2650,14 +3021,20 @@ export default function Home() {
                             type="button"
                           >
                             <strong>
-                              {event.type === 'escape' ? 'Escape' : 'Visit'} · Well {event.hole}
+                              {event.type === 'escape'
+                                ? event.source === 'auto'
+                                  ? 'Possible escape'
+                                  : 'Escape'
+                                : 'Visit'}{' '}
+                              · Well {event.hole}
                             </strong>
                             <span>
                               Frame {event.startFrame + 1} · {formatSeconds(event.timeSeconds)}
                             </span>
                             <span>
-                              {event.source} · {event.durationSeconds.toFixed(2)} s ·{' '}
-                              {Math.round(event.confidence * 100)}%
+                              {event.type === 'escape' && event.source === 'auto'
+                                ? `Open no-detection run · ${event.durationSeconds.toFixed(2)} s · ${Math.round(event.confidence * 100)}%`
+                                : `${event.source} · ${event.durationSeconds.toFixed(2)} s · ${Math.round(event.confidence * 100)}%`}
                             </span>
                           </button>
                         ))
@@ -2949,6 +3326,46 @@ export default function Home() {
                 </label>
               </div>
             </details>
+
+            <details className="settings-group" open>
+              <summary>
+                <span>Trajectory cleanup</span>
+                <small>Applies to derived path metrics; raw annotations stay unchanged</small>
+              </summary>
+              <div className="settings-group-content grid gap-3 md:grid-cols-3">
+                <label className="control">
+                  <span>Smoothing: {smoothingWindow === 0 ? 'Off' : `${smoothingWindow}-frame window`}</span>
+                  <input
+                    max="4"
+                    min="0"
+                    onChange={(event) => setSmoothingWindow(Number(event.target.value))}
+                    type="range"
+                    value={smoothingWindow}
+                  />
+                </label>
+                <label className="control">
+                  <span>Gap fill: {maxGapFrames === 0 ? 'Off' : `up to ${maxGapFrames} frames`}</span>
+                  <input
+                    max="12"
+                    min="0"
+                    onChange={(event) => setMaxGapFrames(Number(event.target.value))}
+                    type="range"
+                    value={maxGapFrames}
+                  />
+                </label>
+                <label className="control">
+                  <span>Outlier jump: {outlierDistancePx} px</span>
+                  <input
+                    max="180"
+                    min="20"
+                    onChange={(event) => setOutlierDistancePx(Number(event.target.value))}
+                    step="5"
+                    type="range"
+                    value={outlierDistancePx}
+                  />
+                </label>
+              </div>
+            </details>
           </div>
           <p className="roi-note">
             <MousePointer2 size={14} aria-hidden="true" />
@@ -3032,20 +3449,28 @@ export default function Home() {
 
                 <div className="result-actions">
                   <button
-                    className="wide-action"
-                    onClick={() => setCorrections((value) => value + 1)}
-                    type="button"
-                  >
-                    <MousePointer2 size={16} aria-hidden="true" />
-                    Record correction
-                  </button>
-                  <button
                     className="wide-action primary"
                     onClick={() => download(csv, 'barnesai-trial-summary.csv', 'text/csv')}
                     type="button"
                   >
                     <Download size={16} aria-hidden="true" />
                     Summary CSV
+                  </button>
+                  <button
+                    className="wide-action"
+                    onClick={() =>
+                      downloadWorkbook(
+                        [
+                          { name: 'Summary', rows: parseCsv(csv) },
+                          { name: 'Events', rows: parseCsv(eventCsv) },
+                        ],
+                        'barnesai-trial-report.xlsx',
+                      )
+                    }
+                    type="button"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Trial XLSX
                   </button>
                   <button
                     className="wide-action"
@@ -3058,6 +3483,20 @@ export default function Home() {
                   </button>
                   <button
                     className="wide-action"
+                    disabled={Object.keys(sessionResults).length === 0}
+                    onClick={() =>
+                      downloadWorkbook(
+                        [{ name: 'Cohort summary', rows: parseCsv(cohortCsv) }],
+                        'barnesai-cohort-summary.xlsx',
+                      )
+                    }
+                    type="button"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Cohort XLSX ({Object.keys(sessionResults).length})
+                  </button>
+                  <button
+                    className="wide-action"
                     disabled={eventLog.length === 0}
                     onClick={() => download(eventCsv, 'barnesai-event-detail.csv', 'text/csv')}
                     type="button"
@@ -3067,6 +3506,48 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div className="quality-visualizations">
+              <section className="quality-plot">
+                <div className="quality-plot-heading">
+                  <strong>Tracking quality</strong>
+                  <span>{reviewFlags.length} flagged frames</span>
+                </div>
+                <div className="quality-timeline" aria-label="Flagged frame distribution">
+                  {reviewFlags.map((flag) => (
+                    <button
+                      aria-label={`Jump to flagged frame ${flag.frame + 1}: ${flag.reason}`}
+                      className={`quality-flag ${flag.reason} ${flag.reviewed ? 'reviewed' : ''}`}
+                      key={`${flag.frame}-${flag.reason}`}
+                      onClick={() => seekToFrame(flag.frame)}
+                      style={{ left: `${(flag.frame / Math.max(1, totalFrames - 1)) * 100}%` }}
+                      type="button"
+                    />
+                  ))}
+                </div>
+                <small>Each marker is clickable. Orange means low confidence; red means no detection.</small>
+              </section>
+              <section className="quality-plot">
+                <div className="quality-plot-heading">
+                  <strong>Occupancy</strong>
+                  <span>{validTrajectory.length} tracked frames</span>
+                </div>
+                <svg aria-label="Trajectory occupancy heat map" className="occupancy-map" viewBox="0 0 12 9">
+                  {occupancyCells.map((cell) => (
+                    <rect
+                      fill="currentColor"
+                      height="1"
+                      key={`${cell.column}-${cell.row}`}
+                      opacity={cell.opacity}
+                      width="1"
+                      x={cell.column}
+                      y={cell.row}
+                    />
+                  ))}
+                </svg>
+                <small>Darker cells show where the saved body trajectory spent more time.</small>
+              </section>
             </div>
 
             <div className="strategy">
@@ -3105,8 +3586,8 @@ export default function Home() {
 
           <ol className="guide-steps">
             <li>
-              <strong>Load video</strong>
-              <span>Use Add videos to select a batch. Each card is one trial; select a card to review it.</span>
+              <strong>Start or restore a session</strong>
+              <span>Use Add videos, Add folder, or drag files here. Open project restores saved annotations after you reconnect the same files.</span>
             </li>
             <li>
               <strong>Apply or calibrate settings</strong>
@@ -3122,7 +3603,7 @@ export default function Home() {
             </li>
             <li>
               <strong>Review flagged frames</strong>
-              <span>Open Flags, select a frame, correct its overlay, then choose Unflag &amp; next.</span>
+              <span>Open Flags, select a frame, correct its overlay, then choose Unflag &amp; next. An open no-detection run can appear as Possible escape; use Escape only when the mouse truly enters the box.</span>
             </li>
             <li>
               <strong>Finalize and export</strong>

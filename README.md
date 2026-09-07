@@ -12,7 +12,7 @@ This is the first runnable P0 slice. It includes:
 
 - A static web app shell for Barnes maze analysis.
 - The three Salk sample trials represented with committed still frames.
-- Local MP4 loading through the browser file picker.
+- Multi-video local MP4 sessions through file selection, folder selection, or drag and drop.
 - Video underlay with an interactive SVG annotation overlay.
 - Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
 - Editable target-well and detection-threshold controls.
@@ -25,7 +25,8 @@ This is the first runnable P0 slice. It includes:
 - Trajectory-derived path length, speed, target-quadrant occupancy, and draft search-strategy classification with a visible manual override.
 - Per-trial metrics, per-event detail, and tracking-quality indicators.
 - Manual correction count tracking.
-- CSV and JSON downloads from the browser.
+- Per-trial CSV/XLSX, cohort-summary CSV/XLSX, event-detail CSV, and reloadable project JSON downloads from the browser.
+- Project restore: saved annotations, review flags, settings, and results reconnect when the same local video files are selected again.
 - A small WebMCP-compatible agent surface for reading the selected trial and staging event thresholds.
 - Unit tests for core Barnes maze metric calculations.
 
@@ -58,7 +59,7 @@ npm run dev
 
 1. Open the app.
 2. To use the built-in sample state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the trial strip above the video workspace.
-3. To load a real local video, click `Load video` and select one of the Salk sample MP4 files from `/Users/ddfsco/Documents/ChatGPT/Ray/salk-rse-takehome-2026/data/barnes-maze/`.
+3. To load a real local cohort, click `Add videos`, `Add folder`, or drag the MP4 files into the session strip. Each video becomes one selectable trial card.
 4. Review the platform boundary, well markers, target well, and the preset body/nose skeleton over the frame/video.
 5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
 6. Use the tool and layer dock immediately to the left of the video window, like a drawing app:
@@ -83,8 +84,8 @@ npm run dev
 15. Adjust dwell-time and nose-proxy distance thresholds. Event-derived latency/error metrics update immediately when tracked points exist.
 16. Use platform X/Y, radius, platform diameter, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
 17. Review the Results panel. `Auto` assigns a draft spatial/serial/random search strategy from event order and trajectory context; choose a manual strategy if the automatic label is not defensible.
-18. Click `Summary CSV` for the trial summary or `Event CSV` for per-event details.
-19. Use the JSON icon above the video panel to export a reloadable project-state sketch with ROI, layer state, per-frame annotations, frame-analysis metadata, review flags, event log, derived metrics, and correction records.
+18. Click `Summary CSV` or `Trial XLSX` for one trial, `Event CSV` for per-event details, or `Cohort CSV` / `Cohort XLSX` for one summary row per completed local trial.
+19. Use the JSON icon above the video panel to save the project. Later, choose `Open project`, then add the same local video files to reconnect the saved annotations and review state.
 
 ## Design Details
 
