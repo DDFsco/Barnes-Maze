@@ -567,6 +567,125 @@ body {
     @apply absolute top-0 h-full w-1 bg-destructive;
   }
 
+  .settings-presets {
+    @apply mt-4 rounded-md border border-border bg-background p-3;
+  }
+
+  .collapsible-section > .collapsible-summary {
+    @apply flex cursor-pointer list-none items-center gap-3 text-sm font-semibold text-foreground;
+  }
+
+  .collapsible-section > .collapsible-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .collapsible-section > .collapsible-summary small {
+    @apply mr-auto text-xs font-normal text-muted-foreground;
+  }
+
+  .collapsible-section > .collapsible-summary::after {
+    content: '+';
+    @apply text-base font-normal text-muted-foreground;
+  }
+
+  .collapsible-section[open] > .collapsible-summary {
+    @apply mb-3;
+  }
+
+  .collapsible-section[open] > .collapsible-summary::after {
+    content: '-';
+  }
+
+  .settings-presets-heading {
+    @apply mb-3 flex items-start justify-between gap-3 text-xs text-muted-foreground;
+  }
+
+  .settings-presets-heading h3 {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .settings-presets-heading div span {
+    @apply mt-0.5 block;
+  }
+
+  .settings-preset-slots {
+    @apply grid gap-2 md:grid-cols-3;
+  }
+
+  .settings-preset-slot {
+    @apply flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-card p-2;
+  }
+
+  .settings-preset-slot.active {
+    @apply border-primary/60 bg-secondary/60;
+  }
+
+  .settings-preset-slot strong,
+  .settings-preset-slot span {
+    @apply block;
+  }
+
+  .settings-preset-slot strong {
+    @apply text-xs font-semibold;
+  }
+
+  .settings-preset-slot span {
+    @apply mt-0.5 text-[11px] text-muted-foreground;
+  }
+
+  .settings-preset-actions {
+    @apply flex shrink-0 items-center gap-1;
+  }
+
+  .settings-preset-actions button {
+    @apply inline-flex h-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs font-semibold transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .settings-preset-actions .icon-button {
+    @apply w-8 px-0;
+  }
+
+  .settings-preset-actions button:disabled {
+    @apply cursor-not-allowed opacity-45 hover:bg-card;
+  }
+
+  .settings-groups {
+    @apply mt-4 grid gap-3;
+  }
+
+  .settings-group {
+    @apply rounded-md border border-border bg-background;
+  }
+
+  .settings-group summary {
+    @apply flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-semibold text-foreground;
+  }
+
+  .settings-group summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .settings-group summary::after {
+    content: '+';
+    @apply order-last text-base font-normal text-muted-foreground;
+  }
+
+  .settings-group[open] summary {
+    @apply border-b border-border;
+  }
+
+  .settings-group[open] summary::after {
+    content: '-';
+  }
+
+  .settings-group summary small {
+    @apply mr-auto text-xs font-normal text-muted-foreground;
+  }
+
+  .settings-group-content {
+    @apply p-3;
+  }
+
   .control {
     @apply flex min-h-24 flex-col justify-between rounded-md border border-border bg-background p-3 text-sm;
   }
@@ -589,7 +708,7 @@ body {
   }
 
   .frame-controls {
-    @apply mt-4 grid gap-2 rounded-md border border-border bg-background p-3 text-sm md:grid-cols-[auto_auto_auto_minmax(0,1fr)_110px];
+    @apply mt-4 grid gap-2 rounded-md border border-border bg-background p-3 text-sm md:grid-cols-[auto_auto_auto_minmax(0,1fr)_minmax(10rem,auto)_110px];
   }
 
   .frame-controls button {
@@ -606,6 +725,10 @@ body {
 
   .frame-controls input {
     @apply h-10 min-w-0 rounded-md border border-input bg-card px-2;
+  }
+
+  .frame-controls .frame-count-readout output {
+    @apply text-xs text-muted-foreground;
   }
 
   .scrub-control {
@@ -691,8 +814,13 @@ body {
 
   .quality-box p,
   .warning-box p,
+  .strategy p,
   .strategy span {
     @apply text-muted-foreground;
+  }
+
+  .strategy p {
+    @apply mb-2 text-xs leading-relaxed;
   }
 
   .warning-box {
@@ -839,7 +967,7 @@ body {
   }
 
   .object-tabs {
-    @apply grid grid-cols-3 rounded-md border border-border bg-background p-1;
+    @apply grid grid-cols-2 rounded-md border border-border bg-background p-1;
   }
 
   .object-tabs button {
@@ -927,6 +1055,10 @@ body {
 
   .object-tree span {
     @apply mt-0.5 text-xs text-muted-foreground;
+  }
+
+  .object-panel-note {
+    @apply mb-2 text-xs leading-snug text-muted-foreground;
   }
 
   .object-tree p {

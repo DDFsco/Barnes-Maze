@@ -20,6 +20,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 type Point = { x: number; y: number };
 type Platform = Point & { r: number };
 type Well = Point & { id: number; radius: number };
+type SettingsSnapshot = {
+  targetHole: number;
+  selectedWellId: number;
+  dwell: number;
+  distance: number;
+  platformDiameterCm: number;
+  platform: Platform;
+  holes: Well[];
+  holeScale: number;
+  rotationDegrees: number;
+};
+type SettingsPreset = {
+  id: number;
+  settings: SettingsSnapshot | null;
+};
 type ToolMode =
   | 'select'
   | 'add-nodes'
@@ -30,7 +45,7 @@ type ToolMode =
   | 'nose'
   | 'investigation'
   | 'escape';
-type ObjectPanelTab = 'mice' | 'wells' | 'events';
+type ObjectPanelTab = 'mice' | 'wells' | 'events' | 'flagged';
 type SearchStrategy = 'spatial' | 'serial' | 'random';
 type DragTarget =
   | { type: 'platform'; start: Point; origin: Platform }
@@ -63,6 +78,8 @@ type EventLogEntry = {
   timeSeconds: number;
   durationSeconds: number;
   confidence: number;
+  detectionConfidence: number;
+  terminal: boolean;
 };
 
 type TrajectoryPoint = Point & {
@@ -76,6 +93,7 @@ type FrameAnnotation = {
   selectedSkeletonId: number;
   events: AnnotationEvent[];
   touched: boolean;
+  detectionConfidence?: number;
 };
 
 type AnnotationStore = Record<string, Record<string, FrameAnnotation>>;
@@ -139,11 +157,33 @@ type SampleVideo = {
 };
 
 type UploadedVideo = {
+  id: string;
   name: string;
   url: string;
   durationSeconds: number;
   width: number;
   height: number;
+};
+
+type SessionResult = {
+  videoId: string;
+  video: string;
+  status: 'complete' | 'partial';
+  durationSeconds: number;
+  fps: number;
+  frameCount: number;
+  framesProcessed: number;
+  framesSaved: number;
+  flagsOpen: number;
+  primaryLatency: number | null;
+  totalLatency: number | null;
+  primaryErrors: number | null;
+  totalErrors: number | null;
+  events: number;
+  pathCm: number | null;
+  speedCms: number | null;
+  targetQuadrantPct: number | null;
+  strategy: SearchStrategy | null;
 };
 
 type ReviewFlagsByVideo = Record<string, ReviewFlag[]>;
@@ -244,6 +284,12 @@ const statuses = [
 ];
 
 const annotationStorageKey = 'barnesai.frameAnnotations.v1';
+const settingsPresetStorageKey = 'barnesai.settingsPresets.v1';
+const emptySettingsPresets: SettingsPreset[] = [
+  { id: 1, settings: null },
+  { id: 2, settings: null },
+  { id: 3, settings: null },
+];
 
 const initialAnalysis: FrameAnalysis = {
   status: 'idle',
@@ -334,15 +380,18 @@ function detectEventLog(
         startFrame: number;
         endFrame: number;
         confidenceSum: number;
+        detectionConfidenceSum: number;
         count: number;
       }
     | null = null;
+  let terminalReached = false;
 
   function closeActive() {
     if (!active) return;
     const durationFrames = active.endFrame - active.startFrame + 1;
     if (durationFrames >= minFrames) {
-      const type = active.hole === targetWell ? 'escape' : 'investigation';
+      const isTerminal = active.hole === targetWell && !terminalReached;
+      const type = isTerminal ? 'escape' : 'investigation';
       autoEvents.push({
         id: `auto-${active.hole}-${active.startFrame}-${active.endFrame}`,
         type,
@@ -353,12 +402,16 @@ function detectEventLog(
         timeSeconds: active.startFrame / fps,
         durationSeconds: durationFrames / fps,
         confidence: active.confidenceSum / Math.max(1, active.count),
+        detectionConfidence: active.detectionConfidenceSum / Math.max(1, active.count),
+        terminal: isTerminal,
       });
+      if (isTerminal) terminalReached = true;
     }
     active = null;
   }
 
   for (const { frame, annotation } of sortedFrames) {
+    if (terminalReached) break;
     for (const event of annotation.events) {
       manualEvents.push({
         id: `manual-${event.type}-${event.hole}-${event.frame}`,
@@ -370,8 +423,13 @@ function detectEventLog(
         timeSeconds: event.frame / fps,
         durationSeconds: 0,
         confidence: 1,
+        detectionConfidence: 1,
+        terminal: event.type === 'escape',
       });
+      if (event.type === 'escape') terminalReached = true;
     }
+
+    if (terminalReached) break;
 
     const skeleton = annotation.skeletons.find(
       (candidate) => candidate.id === annotation.selectedSkeletonId,
@@ -391,19 +449,23 @@ function detectEventLog(
     }
 
     const confidence = clamp(1 - nearest.distance / Math.max(1, hitWell.radius + 8), 0.1, 1);
+    const detectionConfidence = annotation.detectionConfidence ?? 1;
     if (active !== null && active.hole === hitWell.id && frame <= active.endFrame + 1) {
       active.endFrame = frame;
       active.confidenceSum += confidence;
+      active.detectionConfidenceSum += detectionConfidence;
       active.count += 1;
       continue;
     }
 
     closeActive();
+    if (terminalReached) break;
     active = {
       hole: hitWell.id,
       startFrame: frame,
       endFrame: frame,
       confidenceSum: confidence,
+      detectionConfidenceSum: detectionConfidence,
       count: 1,
     };
   }
@@ -530,9 +592,11 @@ function makeFrameAnnotation(body: Point): FrameAnnotation {
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const uploadedVideosRef = useRef<UploadedVideo[]>([]);
   const frameImageRef = useRef<HTMLImageElement | null>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stopTrackingRef = useRef(false);
+  const expectedSeekFrameRef = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState(samples[0].id);
   const [targetHole, setTargetHole] = useState(samples[0].targetHole);
@@ -540,9 +604,12 @@ export default function Home() {
   const [distance, setDistance] = useState(1.8);
   const [platformDiameterCm, setPlatformDiameterCm] = useState(91);
   const [strategyOverride, setStrategyOverride] = useState<'auto' | SearchStrategy>('auto');
-  const [corrections, setCorrections] = useState(1);
-  const [uploadedVideo, setUploadedVideo] = useState<UploadedVideo | null>(null);
+  const [corrections, setCorrections] = useState(0);
+  const [uploadedVideos, setUploadedVideos] = useState<UploadedVideo[]>([]);
+  const [activeUploadedVideoId, setActiveUploadedVideoId] = useState<string | null>(null);
+  const [sessionResults, setSessionResults] = useState<Record<string, SessionResult>>({});
   const [currentTime, setCurrentTime] = useState(0);
+  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [fps, setFps] = useState(samples[0].fpsValue);
   const [platform, setPlatform] = useState(samples[0].platform);
@@ -561,16 +628,23 @@ export default function Home() {
   const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis>(initialAnalysis);
   const [trackingRun, setTrackingRun] = useState<TrackingRun>(initialTrackingRun);
   const [reviewFlagsByVideo, setReviewFlagsByVideo] = useState<ReviewFlagsByVideo>({});
+  const [settingsPresets, setSettingsPresets] = useState<SettingsPreset[]>(emptySettingsPresets);
+  const [activeSettingsPresetId, setActiveSettingsPresetId] = useState<number | null>(null);
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const [objectPanelTab, setObjectPanelTab] = useState<ObjectPanelTab>('mice');
   const [dragTarget, setDragTarget] = useState<DragTarget | null>(null);
 
+  const uploadedVideo =
+    uploadedVideos.find((video) => video.id === activeUploadedVideoId) ?? null;
   const selected = samples.find((sample) => sample.id === selectedId) ?? samples[0];
   const activeDuration = uploadedVideo?.durationSeconds || selected.durationSeconds;
   const activeLabel = uploadedVideo?.name ?? selected.fileName;
-  const activeVideoKey = uploadedVideo ? `local:${uploadedVideo.name}` : selected.id;
-  const totalFrames = Math.max(1, Math.round(activeDuration * fps));
-  const currentFrame = clamp(Math.round(currentTime * fps), 0, totalFrames - 1);
+  const activeVideoKey = uploadedVideo ? `local:${uploadedVideo.id}` : selected.id;
+  const totalFrames = uploadedVideo
+    ? Math.max(1, Math.round(activeDuration * fps))
+    : selected.frames;
+  const frameCountSource = uploadedVideo ? 'duration-fps-estimate' : 'sample-metadata';
+  const currentFrame = clamp(currentFrameIndex, 0, totalFrames - 1);
   const frameKey = String(currentFrame);
   const frameAnnotation =
     annotationStore[activeVideoKey]?.[frameKey] ?? makeFrameAnnotation(selected.mouse);
@@ -578,6 +652,10 @@ export default function Home() {
   const selectedSkeletonId = frameAnnotation.selectedSkeletonId;
   const events = frameAnnotation.events;
   const selectedWell = holes.find((hole) => hole.id === selectedWellId) ?? holes[0] ?? null;
+  const allWellRadius =
+    holes.length > 0
+      ? Math.round(holes.reduce((sum, hole) => sum + hole.radius, 0) / holes.length)
+      : 10;
   const selectedSkeleton =
     skeletons.find((skeleton) => skeleton.id === selectedSkeletonId) ?? skeletons[0];
   const savedFrameCount = Object.values(annotationStore[activeVideoKey] ?? {}).filter(
@@ -593,8 +671,6 @@ export default function Home() {
   const currentReviewFlag = reviewFlags.find(
     (flag) => flag.frame === currentFrame && !flag.reviewed,
   );
-  const nextOpenReviewFlag =
-    openReviewFlags.find((flag) => flag.frame > currentFrame) ?? openReviewFlags[0] ?? null;
   const frameAnnotations = useMemo(
     () => annotationStore[activeVideoKey] ?? {},
     [activeVideoKey, annotationStore],
@@ -650,8 +726,12 @@ export default function Home() {
     derivedTargetQuadrantPct,
   );
   const finalStrategy = strategyOverride === 'auto' ? autoStrategy.label : strategyOverride;
-  const resultTrackedPercent =
-    hasTrackingSummary ? (trackingRun.saved / Math.max(1, trackingRun.total)) * 100 : null;
+  const processedPercent =
+    hasTrackingSummary ? (trackingRun.processed / Math.max(1, trackingRun.total)) * 100 : null;
+  const lowConfidenceFlags = reviewFlags.filter((flag) => flag.reason === 'low-confidence').length;
+  const noDetectionFlags = reviewFlags.filter((flag) => flag.reason === 'no-detection').length;
+  const highConfidenceAnnotations = Math.max(0, trackingRun.saved - lowConfidenceFlags);
+  const reviewedFlags = reviewFlags.filter((flag) => flag.reviewed).length;
   const csv = useMemo(() => {
     const rows = [
       [
@@ -668,7 +748,15 @@ export default function Home() {
         'speed_cm_s',
         'target_quadrant_percent',
         'strategy',
-        'tracked_percent',
+        'frame_count',
+        'frame_count_source',
+        'frames_processed',
+        'processing_percent',
+        'draft_annotations',
+        'high_confidence_annotations',
+        'low_confidence_flags',
+        'no_detection_flags',
+        'reviewed_flags',
         'manual_corrections',
       ],
       [
@@ -685,7 +773,15 @@ export default function Home() {
         derivedSpeedCms !== null ? derivedSpeedCms.toFixed(2) : '',
         derivedTargetQuadrantPct !== null ? derivedTargetQuadrantPct.toFixed(1) : '',
         finalStrategy ?? '',
-        resultTrackedPercent !== null ? resultTrackedPercent.toFixed(1) : '',
+        totalFrames,
+        frameCountSource,
+        trackingRun.processed || '',
+        processedPercent !== null ? processedPercent.toFixed(1) : '',
+        trackingRun.saved || '',
+        trackingRun.total > 0 ? highConfidenceAnnotations : '',
+        trackingRun.total > 0 ? lowConfidenceFlags : '',
+        trackingRun.total > 0 ? noDetectionFlags : '',
+        trackingRun.total > 0 ? reviewedFlags : '',
         corrections,
       ],
     ];
@@ -701,12 +797,21 @@ export default function Home() {
     derivedTargetQuadrantPct,
     derivedTotalLatency,
     eventLog.length,
+    frameCountSource,
     finalStrategy,
     fps,
+    highConfidenceAnnotations,
     hasDerivedResults,
+    lowConfidenceFlags,
+    noDetectionFlags,
     primaryErrors,
-    resultTrackedPercent,
+    processedPercent,
+    reviewedFlags,
     targetHole,
+    totalFrames,
+    trackingRun.processed,
+    trackingRun.saved,
+    trackingRun.total,
   ]);
   const eventCsv = useMemo(() => {
     const rows = [
@@ -720,7 +825,11 @@ export default function Home() {
         'end_frame',
         'time_seconds',
         'duration_seconds',
-        'confidence',
+        'event_confidence',
+        'detection_confidence',
+        'review_status',
+        'is_terminal',
+        'analysis_version',
       ],
       ...eventLog.map((event) => [
         activeLabel,
@@ -733,16 +842,136 @@ export default function Home() {
         event.timeSeconds.toFixed(3),
         event.durationSeconds.toFixed(3),
         event.confidence.toFixed(3),
+        event.detectionConfidence.toFixed(3),
+        reviewFlags.some(
+          (flag) => flag.frame >= event.startFrame && flag.frame <= event.endFrame && !flag.reviewed,
+        )
+          ? 'needs-review'
+          : event.source === 'manual'
+            ? 'manual'
+            : 'auto-draft',
+        event.terminal ? 'true' : 'false',
+        'classical-cv-v1',
       ]),
     ];
     return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
-  }, [activeLabel, eventLog]);
+  }, [activeLabel, eventLog, reviewFlags]);
+  const cohortCsv = useMemo(() => {
+    const rows = [
+      [
+        'video',
+        'analysis_status',
+        'duration_seconds',
+        'fps',
+        'frame_count',
+        'frames_processed',
+        'draft_annotations',
+        'open_review_flags',
+        'primary_latency_seconds',
+        'total_latency_seconds',
+        'primary_errors',
+        'total_errors',
+        'events_detected',
+        'path_cm',
+        'speed_cm_s',
+        'target_quadrant_percent',
+        'strategy',
+      ],
+      ...Object.values(sessionResults).map((result) => [
+        result.video,
+        result.status,
+        result.durationSeconds.toFixed(2),
+        result.fps.toFixed(3),
+        result.frameCount,
+        result.framesProcessed,
+        result.framesSaved,
+        result.flagsOpen,
+        result.primaryLatency?.toFixed(3) ?? '',
+        result.totalLatency?.toFixed(3) ?? '',
+        result.primaryErrors ?? '',
+        result.totalErrors ?? '',
+        result.events,
+        result.pathCm?.toFixed(3) ?? '',
+        result.speedCms?.toFixed(3) ?? '',
+        result.targetQuadrantPct?.toFixed(3) ?? '',
+        result.strategy ?? '',
+      ]),
+    ];
+    return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  }, [sessionResults]);
+
+  function createSettingsSnapshot(): SettingsSnapshot {
+    return {
+      targetHole,
+      selectedWellId,
+      dwell,
+      distance,
+      platformDiameterCm,
+      platform: { ...platform },
+      holes: holes.map((hole) => ({ ...hole })),
+      holeScale,
+      rotationDegrees,
+    };
+  }
+
+  function applySettingsSnapshot(settings: SettingsSnapshot) {
+    const nextHoles = settings.holes.map((hole) => ({ ...hole }));
+    if (nextHoles.length === 0) return;
+    const validTarget = nextHoles.some((hole) => hole.id === settings.targetHole)
+      ? settings.targetHole
+      : nextHoles[0].id;
+    const validSelected = nextHoles.some((hole) => hole.id === settings.selectedWellId)
+      ? settings.selectedWellId
+      : validTarget;
+    setTargetHole(validTarget);
+    setSelectedWellId(validSelected);
+    setDwell(settings.dwell);
+    setDistance(settings.distance);
+    setPlatformDiameterCm(settings.platformDiameterCm);
+    setPlatform({ ...settings.platform });
+    setHoles(nextHoles);
+    setHoleScale(settings.holeScale);
+    setRotationDegrees(settings.rotationDegrees);
+  }
+
+  function persistSettingsPresets(presets: SettingsPreset[], activePresetId: number | null) {
+    window.localStorage.setItem(
+      settingsPresetStorageKey,
+      JSON.stringify({ presets, activePresetId }),
+    );
+  }
+
+  function saveSettingsPreset(id: number) {
+    const nextPresets = settingsPresets.map((preset) =>
+      preset.id === id ? { ...preset, settings: createSettingsSnapshot() } : preset,
+    );
+    setSettingsPresets(nextPresets);
+    setActiveSettingsPresetId(id);
+    persistSettingsPresets(nextPresets, id);
+  }
+
+  function loadSettingsPreset(id: number) {
+    const preset = settingsPresets.find((candidate) => candidate.id === id);
+    if (!preset?.settings) return;
+    applySettingsSnapshot(preset.settings);
+    setActiveSettingsPresetId(id);
+    persistSettingsPresets(settingsPresets, id);
+  }
+
+  function applyActiveSettingsPreset() {
+    const preset = settingsPresets.find((candidate) => candidate.id === activeSettingsPresetId);
+    if (preset?.settings) applySettingsSnapshot(preset.settings);
+  }
+
+  useEffect(() => {
+    uploadedVideosRef.current = uploadedVideos;
+  }, [uploadedVideos]);
 
   useEffect(() => {
     return () => {
-      if (uploadedVideo?.url) URL.revokeObjectURL(uploadedVideo.url);
+      uploadedVideosRef.current.forEach((video) => URL.revokeObjectURL(video.url));
     };
-  }, [uploadedVideo?.url]);
+  }, []);
 
   useEffect(() => {
     const restoreId = window.setTimeout(() => {
@@ -763,6 +992,33 @@ export default function Home() {
     if (!hasLoadedLocalAnnotations) return;
     window.localStorage.setItem(annotationStorageKey, JSON.stringify(annotationStore));
   }, [annotationStore, hasLoadedLocalAnnotations]);
+
+  useEffect(() => {
+    const restoreId = window.setTimeout(() => {
+      try {
+        const stored = window.localStorage.getItem(settingsPresetStorageKey);
+        if (!stored) return;
+        const parsed = JSON.parse(stored) as {
+          presets?: SettingsPreset[];
+          activePresetId?: number | null;
+        };
+        const restored = emptySettingsPresets.map((slot) => {
+          const savedSlot = parsed.presets?.find((preset) => preset.id === slot.id);
+          return savedSlot?.settings ? savedSlot : slot;
+        });
+        setSettingsPresets(restored);
+        const activePreset = restored.find((preset) => preset.id === parsed.activePresetId);
+        if (activePreset?.settings) {
+          applySettingsSnapshot(activePreset.settings);
+          setActiveSettingsPresetId(activePreset.id);
+        }
+      } catch {
+        setSettingsPresets(emptySettingsPresets);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(restoreId);
+  }, []);
 
   useEffect(() => {
     const modelContext = document.modelContext;
@@ -814,7 +1070,11 @@ export default function Home() {
                 currentFrameFlag: currentReviewFlag ?? null,
               },
               quality: {
-                trackedPercent: resultTrackedPercent,
+                processingPercent: processedPercent,
+                highConfidenceAnnotations,
+                lowConfidenceFlags,
+                noDetectionFlags,
+                reviewedFlags,
                 failedFrames: reviewFlags.length,
               },
               metrics: {
@@ -872,13 +1132,18 @@ export default function Home() {
     platformDiameterCm,
     pixelsPerCm,
     primaryErrors,
-    resultTrackedPercent,
+    processedPercent,
+    highConfidenceAnnotations,
+    lowConfidenceFlags,
+    noDetectionFlags,
+    reviewedFlags,
     strategyOverride,
     autoStrategy.reason,
     trackingRun,
   ]);
 
   function selectSample(sample: SampleVideo) {
+    setActiveUploadedVideoId(null);
     setSelectedId(sample.id);
     setTargetHole(sample.targetHole);
     setPlatform(sample.platform);
@@ -890,34 +1155,51 @@ export default function Home() {
     setFps(sample.fpsValue);
     setStrategyOverride('auto');
     setCurrentTime(0);
+    setCurrentFrameIndex(0);
+    expectedSeekFrameRef.current = null;
     setToolMode('select');
     setFrameAnalysis(initialAnalysis);
     setTrackingRun(initialTrackingRun);
     setReviewFlagsByVideo((current) => ({ ...current, [sample.id]: current[sample.id] ?? [] }));
+    applyActiveSettingsPreset();
   }
 
-  function loadVideo(file: File) {
-    const previousUrl = uploadedVideo?.url;
-    const nextUrl = URL.createObjectURL(file);
-    setUploadedVideo({
-      name: file.name,
-      url: nextUrl,
-      durationSeconds: 0,
-      width: 640,
-      height: 480,
-    });
+  function resetForLocalVideo() {
     setCurrentTime(0);
+    setCurrentFrameIndex(0);
+    expectedSeekFrameRef.current = null;
     setIsPlaying(false);
     setStrategyOverride('auto');
     setFrameAnalysis({ ...initialAnalysis, source: 'video' });
     setTrackingRun(initialTrackingRun);
-    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    applyActiveSettingsPreset();
+  }
+
+  function selectUploadedVideo(video: UploadedVideo) {
+    setActiveUploadedVideoId(video.id);
+    resetForLocalVideo();
+  }
+
+  function loadVideos(files: FileList | File[]) {
+    const nextVideos = Array.from(files).map((file, index) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${index}-${Date.now()}`,
+      name: file.name,
+      url: URL.createObjectURL(file),
+      durationSeconds: 0,
+      width: 640,
+      height: 480,
+    }));
+    if (nextVideos.length === 0) return;
+    setUploadedVideos((current) => [...current, ...nextVideos]);
+    selectUploadedVideo(nextVideos[0]);
   }
 
   function seekToFrame(frame: number) {
     const safeFrame = clamp(frame, 0, totalFrames - 1);
     const nextTime = safeFrame / fps;
     setFrameAnalysis({ ...initialAnalysis, source: uploadedVideo ? 'video' : 'sample' });
+    setCurrentFrameIndex(safeFrame);
+    expectedSeekFrameRef.current = safeFrame;
     const video = videoRef.current;
     if (video) {
       video.pause();
@@ -929,6 +1211,16 @@ export default function Home() {
       }
     }
     setCurrentTime(nextTime);
+  }
+
+  function syncRenderedVideoTime(time: number) {
+    setCurrentTime(time);
+    const expectedFrame = expectedSeekFrameRef.current;
+    if (expectedFrame !== null) {
+      setCurrentFrameIndex(expectedFrame);
+      return;
+    }
+    setCurrentFrameIndex(clamp(Math.round(time * fps), 0, totalFrames - 1));
   }
 
   function stepFrame(delta: number) {
@@ -1104,6 +1396,10 @@ export default function Home() {
         hole.id === selectedWell.id ? { ...hole, radius: clamp(radius, 4, 28) } : hole,
       ),
     );
+  }
+
+  function updateAllWellRadii(radius: number) {
+    setHoles((current) => current.map((hole) => ({ ...hole, radius: clamp(radius, 4, 28) })));
   }
 
   function removeSelectedWell() {
@@ -1329,10 +1625,10 @@ export default function Home() {
             )
           : [...annotation.skeletons, nextSkeleton],
         selectedSkeletonId: nextId,
+        detectionConfidence: result.confidence,
       };
     });
     setLayers((current) => ({ ...current, skeletons: true }));
-    setCorrections((value) => value + 1);
   }
 
   function analyzeCurrentFrame() {
@@ -1399,19 +1695,17 @@ export default function Home() {
     return Array.from(byFrame.values()).sort((a, b) => a.frame - b.frame);
   }
 
-  function markCurrentFrameReviewed() {
+  function unflagCurrentFrameAndAdvance() {
     if (!currentReviewFlag) return;
+    const nextFlag = openReviewFlags.find((flag) => flag.frame > currentReviewFlag.frame) ?? null;
     setReviewFlagsByVideo((current) => ({
       ...current,
       [activeVideoKey]: (current[activeVideoKey] ?? []).map((flag) =>
         flag.frame === currentFrame ? { ...flag, reviewed: true } : flag,
       ),
     }));
-  }
-
-  function jumpToNextFlaggedFrame() {
-    if (!nextOpenReviewFlag) return;
-    seekToFrame(nextOpenReviewFlag.frame);
+    setCorrections((value) => value + 1);
+    if (nextFlag) seekToFrame(nextFlag.frame);
   }
 
   async function trackFrameRange(maxFrames: number, label: string) {
@@ -1467,6 +1761,7 @@ export default function Home() {
             selectedSkeletonId: skeletonId,
             events: [],
             touched: true,
+            detectionConfidence: result.confidence,
           };
           saved += 1;
           setFrameAnalysis(result);
@@ -1488,6 +1783,7 @@ export default function Home() {
         }
         if (offset % 5 === 0 || offset === framesToTrack - 1) {
           setCurrentTime(time);
+          setCurrentFrameIndex(frame);
           setTrackingRun({
             status: 'running',
             processed,
@@ -1505,12 +1801,74 @@ export default function Home() {
           ...trackedFrames,
         },
       }));
+      const combinedAnnotations = { ...frameAnnotations, ...trackedFrames };
+      const combinedFlags = mergeReviewFlags(reviewFlags, nextReviewFlags);
+      const completedEvents = detectEventLog(combinedAnnotations, holes, targetHole, dwell, fps);
+      const completedTrajectory = buildTrajectory(combinedAnnotations, fps);
+      const completedPathCm = pathLengthCm(completedTrajectory, pixelsPerCm);
+      const completedValidTrajectory = completedTrajectory.filter((point) => point.valid);
+      const completedDuration =
+        completedValidTrajectory.length >= 2
+          ? (completedValidTrajectory[completedValidTrajectory.length - 1].frame -
+              completedValidTrajectory[0].frame) /
+            fps
+          : null;
+      const completedSpeed =
+        completedPathCm !== null && completedDuration !== null && completedDuration > 0
+          ? completedPathCm / completedDuration
+          : null;
+      const completedTargetQuadrant = targetQuadrantPercent(
+        completedTrajectory,
+        platform,
+        holes.find((hole) => hole.id === targetHole) ?? null,
+      );
+      const completedFirstTarget = completedEvents.find((event) => event.hole === targetHole);
+      const completedFirstEscape = completedEvents.find((event) => event.type === 'escape');
+      const completedPrimaryErrors = completedEvents.filter(
+        (event) =>
+          event.type === 'investigation' &&
+          event.hole !== targetHole &&
+          event.timeSeconds <= (completedFirstTarget?.timeSeconds ?? Infinity),
+      ).length;
+      const completedTotalErrors = completedEvents.filter(
+        (event) => event.type === 'investigation' && event.hole !== targetHole,
+      ).length;
+      const completedStrategy = classifySearchStrategy(
+        completedEvents,
+        targetHole,
+        holes.length,
+        completedPrimaryErrors,
+        completedTargetQuadrant,
+      ).label;
       setReviewFlagsByVideo((current) => ({
         ...current,
-        [activeVideoKey]: mergeReviewFlags(current[activeVideoKey] ?? [], nextReviewFlags),
+        [activeVideoKey]: combinedFlags,
+      }));
+      setSessionResults((current) => ({
+        ...current,
+        [activeVideoKey]: {
+          videoId: activeVideoKey,
+          video: activeLabel,
+          status:
+            stopTrackingRef.current || framesToTrack < totalFrames ? 'partial' : 'complete',
+          durationSeconds: activeDuration,
+          fps,
+          frameCount: totalFrames,
+          framesProcessed: processed,
+          framesSaved: saved,
+          flagsOpen: combinedFlags.filter((flag) => !flag.reviewed).length,
+          primaryLatency: completedFirstTarget?.timeSeconds ?? null,
+          totalLatency: completedFirstEscape?.timeSeconds ?? null,
+          primaryErrors: completedEvents.length > 0 ? completedPrimaryErrors : null,
+          totalErrors: completedEvents.length > 0 ? completedTotalErrors : null,
+          events: completedEvents.length,
+          pathCm: completedPathCm,
+          speedCms: completedSpeed,
+          targetQuadrantPct: completedTargetQuadrant,
+          strategy: completedStrategy,
+        },
       }));
       setLayers((current) => ({ ...current, skeletons: true }));
-      setCorrections((value) => value + saved);
       setTrackingRun({
         status: 'done',
         processed,
@@ -1637,7 +1995,6 @@ export default function Home() {
       setLayers((current) => ({ ...current, skeletons: true }));
       updateSkeletonNode(selectedSkeleton.id, 'body', point);
       setDragTarget({ type: 'body', skeletonId: selectedSkeleton.id });
-      setCorrections((value) => value + 1);
       return;
     }
     if (toolMode === 'nose') {
@@ -1645,7 +2002,6 @@ export default function Home() {
       setLayers((current) => ({ ...current, skeletons: true }));
       updateSkeletonNode(selectedSkeleton.id, 'nose', point);
       setDragTarget({ type: 'nose', skeletonId: selectedSkeleton.id });
-      setCorrections((value) => value + 1);
       return;
     }
     if (toolMode === 'investigation') addEvent('investigation', point);
@@ -1692,6 +2048,13 @@ export default function Home() {
 
   function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
     event.currentTarget.releasePointerCapture(event.pointerId);
+    if (
+      dragTarget?.type === 'body' ||
+      dragTarget?.type === 'nose' ||
+      dragTarget?.type === 'skeleton'
+    ) {
+      setCorrections((value) => value + 1);
+    }
     setDragTarget(null);
   }
 
@@ -1726,7 +2089,11 @@ export default function Home() {
         strategy: finalStrategy,
         strategyOverride,
         strategyReason: autoStrategy.reason,
-        trackedPercent: resultTrackedPercent,
+        processingPercent: processedPercent,
+        highConfidenceAnnotations,
+        lowConfidenceFlags,
+        noDetectionFlags,
+        reviewedFlags,
       },
       reviewQueue: {
         flags: reviewFlags,
@@ -1764,10 +2131,10 @@ export default function Home() {
             <input
               accept="video/mp4,video/*"
               className="sr-only"
-              multiple={false}
+              multiple
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) loadVideo(file);
+                if (event.target.files) loadVideos(event.target.files);
+                event.currentTarget.value = '';
               }}
               ref={fileInputRef}
               type="file"
@@ -1778,7 +2145,7 @@ export default function Home() {
               type="button"
             >
               <FolderOpen size={16} aria-hidden="true" />
-              Load video
+              Add videos
             </button>
             <button className="tool-button primary" onClick={togglePlayback} type="button">
               {isPlaying ? <Pause size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
@@ -1818,26 +2185,33 @@ export default function Home() {
           </div>
 
           <div className="trial-strip" aria-label="Session videos">
-            {uploadedVideo ? (
-              <button
-                aria-label={`Selected local video ${uploadedVideo.name}`}
-                className="trial-card active local"
-                type="button"
-              >
-                <span className="local-video-icon">
-                  <Play size={16} aria-hidden="true" />
-                </span>
-                <span>
-                  <strong>{uploadedVideo.name}</strong>
-                  <small>
-                    local MP4 · {uploadedVideo.durationSeconds > 0
-                      ? formatSeconds(uploadedVideo.durationSeconds)
-                      : 'metadata pending'}
-                  </small>
-                </span>
-              </button>
-            ) : null}
-            {!uploadedVideo
+            {uploadedVideos.map((video) => {
+              const result = sessionResults[`local:${video.id}`];
+              return (
+                <button
+                  aria-label={`Select local video ${video.name}`}
+                  className={`trial-card local ${video.id === activeUploadedVideoId ? 'active' : ''}`}
+                  key={video.id}
+                  onClick={() => selectUploadedVideo(video)}
+                  type="button"
+                >
+                  <span className="local-video-icon">
+                    <Play size={16} aria-hidden="true" />
+                  </span>
+                  <span>
+                    <strong>{video.name}</strong>
+                    <small>
+                      {result
+                        ? `${result.status} · ${result.framesProcessed.toLocaleString()} frames`
+                        : video.durationSeconds > 0
+                          ? `local MP4 · ${formatSeconds(video.durationSeconds)}`
+                          : 'local MP4 · metadata pending'}
+                    </small>
+                  </span>
+                </button>
+              );
+            })}
+            {uploadedVideos.length === 0
               ? samples.map((sample) => (
                   <button
                     aria-label={`Select ${sample.fileName}`}
@@ -1955,32 +2329,15 @@ export default function Home() {
               <div className="frame-status-heading">
                 <h3>Review queue</h3>
                 <span>
-                  {openReviewFlags.length} open / {reviewFlags.length} total
+                  {openReviewFlags.length} flagged
                 </span>
               </div>
               <p>
-                {currentReviewFlag
-                  ? `Current frame: ${currentReviewFlag.reason.replace('-', ' ')}`
-                  : nextOpenReviewFlag
-                    ? `Next flagged frame: ${nextOpenReviewFlag.frame + 1}`
-                    : 'No flagged frames'}
+                {reviewFlags.length > 0
+                  ? `${reviewFlags.length} flags generated by tracking`
+                  : 'No flagged frames'}
               </p>
-              <div className="review-actions">
-                <button
-                  disabled={openReviewFlags.length === 0}
-                  onClick={jumpToNextFlaggedFrame}
-                  type="button"
-                >
-                  Next flagged
-                </button>
-                <button
-                  disabled={!currentReviewFlag}
-                  onClick={markCurrentFrameReviewed}
-                  type="button"
-                >
-                  Mark reviewed
-                </button>
-              </div>
+              <small>Open Flagged frames to review and correct.</small>
             </section>
           </div>
 
@@ -2033,21 +2390,29 @@ export default function Home() {
                     onEnded={() => setIsPlaying(false)}
                     onLoadedMetadata={(event) => {
                       const video = event.currentTarget;
-                      setUploadedVideo((current) =>
-                        current
-                          ? {
-                              ...current,
-                              durationSeconds: video.duration,
-                              width: video.videoWidth || 640,
-                              height: video.videoHeight || 480,
-                            }
-                          : current,
+                      if (!uploadedVideo) return;
+                      setUploadedVideos((current) =>
+                        current.map((candidate) =>
+                          candidate.id === uploadedVideo.id
+                            ? {
+                                ...candidate,
+                                durationSeconds: video.duration,
+                                width: video.videoWidth || 640,
+                                height: video.videoHeight || 480,
+                              }
+                            : candidate,
+                        ),
                       );
                     }}
                     onPause={() => setIsPlaying(false)}
-                    onPlay={() => setIsPlaying(true)}
-                    onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
-                    onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                    onPlay={() => {
+                      expectedSeekFrameRef.current = null;
+                      setIsPlaying(true);
+                    }}
+                    onSeeked={(event) => syncRenderedVideoTime(event.currentTarget.currentTime)}
+                    onTimeUpdate={(event) =>
+                      syncRenderedVideoTime(event.currentTarget.currentTime)
+                    }
                     ref={videoRef}
                     src={uploadedVideo.url}
                   />
@@ -2153,6 +2518,7 @@ export default function Home() {
                     ['mice', `Mice ${skeletons.length}`],
                     ['wells', `Wells ${holes.length}`],
                     ['events', `Events ${eventLog.length}`],
+                    ['flagged', `Flags ${openReviewFlags.length}`],
                   ] as Array<[ObjectPanelTab, string]>).map(([tab, label]) => (
                     <button
                       aria-selected={objectPanelTab === tab}
@@ -2301,6 +2667,46 @@ export default function Home() {
                     </div>
                   </section>
                 ) : null}
+
+                {objectPanelTab === 'flagged' ? (
+                  <section className="object-tab-panel" role="tabpanel">
+                    <div className="object-panel-heading compact">
+                      <h3>Flagged frames</h3>
+                      <span>{openReviewFlags.length} open</span>
+                    </div>
+                    {currentReviewFlag ? (
+                      <button
+                        className="object-clear-button"
+                        onClick={unflagCurrentFrameAndAdvance}
+                        type="button"
+                      >
+                        Unflag &amp; next
+                      </button>
+                    ) : (
+                      <p className="object-panel-note">
+                        Select a flagged frame, correct its overlay, then unflag it.
+                      </p>
+                    )}
+                    <div className="object-tree">
+                      {openReviewFlags.length > 0 ? (
+                        openReviewFlags.map((flag) => (
+                          <button
+                            className={flag.frame === currentFrame ? 'active' : ''}
+                            key={flag.frame}
+                            onClick={() => seekToFrame(flag.frame)}
+                            type="button"
+                          >
+                            <strong>Frame {flag.frame + 1}</strong>
+                            <span>{flag.reason.replace('-', ' ')}</span>
+                            <span>{Math.round(flag.confidence * 100)}% confidence</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p>No flagged frames remain.</p>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </aside>
           </div>
@@ -2328,6 +2734,12 @@ export default function Home() {
                 value={currentFrame + 1}
               />
             </label>
+            <label className="frame-count-readout">
+              <span>Frame count</span>
+              <output>
+                {totalFrames.toLocaleString()} {frameCountSource === 'sample-metadata' ? 'source' : 'estimated'}
+              </output>
+            </label>
             <label>
               <span>FPS</span>
               <input
@@ -2350,7 +2762,10 @@ export default function Home() {
               min="0"
               onChange={(event) => {
                 const time = Number(event.target.value);
+                const frame = clamp(Math.round(time * fps), 0, totalFrames - 1);
                 setCurrentTime(time);
+                setCurrentFrameIndex(frame);
+                expectedSeekFrameRef.current = frame;
                 if (videoRef.current) videoRef.current.currentTime = time;
               }}
               step={1 / fps}
@@ -2359,107 +2774,181 @@ export default function Home() {
             />
           </label>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <label className="control">
-              <span>Target well</span>
-              <select value={targetHole} onChange={(event) => setTargetHole(Number(event.target.value))}>
-                {holes.map((hole) => (
-                  <option key={hole.id} value={hole.id}>
-                    Well {hole.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="control">
-              <span>Dwell threshold: {dwell.toFixed(1)} s</span>
-              <input
-                max="2"
-                min="0.1"
-                onChange={(event) => setDwell(Number(event.target.value))}
-                step="0.1"
-                type="range"
-                value={dwell}
-              />
-            </label>
-            <label className="control">
-              <span>Nose proxy distance: {distance.toFixed(1)} cm</span>
-              <input
-                max="4"
-                min="0.5"
-                onChange={(event) => setDistance(Number(event.target.value))}
-                step="0.1"
-                type="range"
-                value={distance}
-              />
-            </label>
-            <label className="control">
-              <span>Platform diameter: {platformDiameterCm.toFixed(0)} cm</span>
-              <input
-                max="140"
-                min="50"
-                onChange={(event) => setPlatformDiameterCm(Number(event.target.value))}
-                step="1"
-                type="range"
-                value={platformDiameterCm}
-              />
-            </label>
-          </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-5">
-            <label className="control compact">
-              <span>Platform X: {platform.x}px</span>
-              <input
-                max="640"
-                min="0"
-                onChange={(event) => updatePlatform('x', Number(event.target.value))}
-                type="range"
-                value={platform.x}
-              />
-            </label>
-            <label className="control compact">
-              <span>Platform Y: {platform.y}px</span>
-              <input
-                max="480"
-                min="0"
-                onChange={(event) => updatePlatform('y', Number(event.target.value))}
-                type="range"
-                value={platform.y}
-              />
-            </label>
-            <label className="control compact">
-              <span>Radius: {platform.r}px</span>
-              <input
-                max="240"
-                min="120"
-                onChange={(event) => updatePlatform('r', Number(event.target.value))}
-                type="range"
-                value={platform.r}
-              />
-            </label>
-            <label className="control compact">
-              <span>Hole ring: {holeScale.toFixed(2)}</span>
-              <input
-                max="1.05"
-                min="0.7"
-                onChange={(event) =>
-                  updateHoleTemplate(Number(event.target.value), rotationDegrees)
-                }
-                step="0.01"
-                type="range"
-                value={holeScale}
-              />
-            </label>
-            <label className="control compact">
-              <span>Rotation: {rotationDegrees} deg</span>
-              <input
-                max="180"
-                min="-180"
-                onChange={(event) =>
-                  updateHoleTemplate(holeScale, Number(event.target.value))
-                }
-                type="range"
-                value={rotationDegrees}
-              />
-            </label>
+          <details className="settings-presets collapsible-section" open>
+            <summary className="collapsible-summary">
+              <span>Settings presets</span>
+              <small>
+                {activeSettingsPresetId
+                  ? `Preset ${activeSettingsPresetId} active`
+                  : 'Saved locally'}
+              </small>
+            </summary>
+            <div className="settings-preset-slots">
+              {settingsPresets.map((preset) => (
+                <div
+                  className={`settings-preset-slot ${activeSettingsPresetId === preset.id ? 'active' : ''}`}
+                  key={preset.id}
+                >
+                  <div>
+                    <strong>Preset {preset.id}</strong>
+                    <span>
+                      {preset.settings
+                        ? `${preset.settings.holes.length} wells · ${Math.round(
+                            preset.settings.holes.reduce((sum, hole) => sum + hole.radius, 0) /
+                              Math.max(1, preset.settings.holes.length),
+                          )} px`
+                        : 'Empty'}
+                    </span>
+                  </div>
+                  <div className="settings-preset-actions">
+                    <button
+                      disabled={!preset.settings}
+                      onClick={() => loadSettingsPreset(preset.id)}
+                      type="button"
+                    >
+                      Load
+                    </button>
+                    <button
+                      aria-label={`Save current settings to preset ${preset.id}`}
+                      className="icon-button"
+                      onClick={() => saveSettingsPreset(preset.id)}
+                      title={`Save current settings to preset ${preset.id}`}
+                      type="button"
+                    >
+                      <Save size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <div className="settings-groups">
+            <details className="settings-group" open>
+              <summary>
+                <span>Event detection</span>
+                <small>Target well, dwell, and nose threshold</small>
+              </summary>
+              <div className="settings-group-content grid gap-3 md:grid-cols-3">
+                <label className="control">
+                  <span>Target well</span>
+                  <select value={targetHole} onChange={(event) => setTargetHole(Number(event.target.value))}>
+                    {holes.map((hole) => (
+                      <option key={hole.id} value={hole.id}>
+                        Well {hole.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="control">
+                  <span>Dwell threshold: {dwell.toFixed(1)} s</span>
+                  <input
+                    max="2"
+                    min="0.1"
+                    onChange={(event) => setDwell(Number(event.target.value))}
+                    step="0.1"
+                    type="range"
+                    value={dwell}
+                  />
+                </label>
+                <label className="control">
+                  <span>Nose proxy distance: {distance.toFixed(1)} cm</span>
+                  <input
+                    max="4"
+                    min="0.5"
+                    onChange={(event) => setDistance(Number(event.target.value))}
+                    step="0.1"
+                    type="range"
+                    value={distance}
+                  />
+                </label>
+              </div>
+            </details>
+
+            <details className="settings-group" open>
+              <summary>
+                <span>Maze geometry</span>
+                <small>Platform, well size, placement, and rotation</small>
+              </summary>
+              <div className="settings-group-content grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <label className="control">
+                  <span>Platform diameter: {platformDiameterCm.toFixed(0)} cm</span>
+                  <input
+                    max="140"
+                    min="50"
+                    onChange={(event) => setPlatformDiameterCm(Number(event.target.value))}
+                    step="1"
+                    type="range"
+                    value={platformDiameterCm}
+                  />
+                </label>
+                <label className="control">
+                  <span>Well size (all): {allWellRadius} px</span>
+                  <input
+                    max="28"
+                    min="4"
+                    onChange={(event) => updateAllWellRadii(Number(event.target.value))}
+                    type="range"
+                    value={allWellRadius}
+                  />
+                </label>
+                <label className="control compact">
+                  <span>Platform X: {platform.x}px</span>
+                  <input
+                    max="640"
+                    min="0"
+                    onChange={(event) => updatePlatform('x', Number(event.target.value))}
+                    type="range"
+                    value={platform.x}
+                  />
+                </label>
+                <label className="control compact">
+                  <span>Platform Y: {platform.y}px</span>
+                  <input
+                    max="480"
+                    min="0"
+                    onChange={(event) => updatePlatform('y', Number(event.target.value))}
+                    type="range"
+                    value={platform.y}
+                  />
+                </label>
+                <label className="control compact">
+                  <span>Radius: {platform.r}px</span>
+                  <input
+                    max="240"
+                    min="120"
+                    onChange={(event) => updatePlatform('r', Number(event.target.value))}
+                    type="range"
+                    value={platform.r}
+                  />
+                </label>
+                <label className="control compact">
+                  <span>Hole ring: {holeScale.toFixed(2)}</span>
+                  <input
+                    max="1.05"
+                    min="0.7"
+                    onChange={(event) =>
+                      updateHoleTemplate(Number(event.target.value), rotationDegrees)
+                    }
+                    step="0.01"
+                    type="range"
+                    value={holeScale}
+                  />
+                </label>
+                <label className="control compact">
+                  <span>Rotation: {rotationDegrees} deg</span>
+                  <input
+                    max="180"
+                    min="-180"
+                    onChange={(event) =>
+                      updateHoleTemplate(holeScale, Number(event.target.value))
+                    }
+                    type="range"
+                    value={rotationDegrees}
+                  />
+                </label>
+              </div>
+            </details>
           </div>
           <p className="roi-note">
             <MousePointer2 size={14} aria-hidden="true" />
@@ -2474,11 +2963,11 @@ export default function Home() {
             width="640"
           />
 
-          <section className="results-section">
-            <div className="panel-heading">
-              <h2>Results</h2>
-              <span>{eventLog.length > 0 ? 'event-derived' : 'pending'}</span>
-            </div>
+          <details className="results-section collapsible-section" open>
+            <summary className="collapsible-summary">
+              <span>Results</span>
+              <small>{eventLog.length > 0 ? 'event-derived' : 'pending'}</small>
+            </summary>
 
             <div className="results-grid">
               <div className="metric-grid">
@@ -2522,14 +3011,14 @@ export default function Home() {
                   <div>
                     <CircleDot size={18} aria-hidden="true" />
                     <strong>
-                      {resultTrackedPercent !== null
-                        ? `${resultTrackedPercent.toFixed(1)}% frames tracked`
+                      {processedPercent !== null
+                        ? `${processedPercent.toFixed(1)}% frames processed`
                         : 'Tracking not run'}
                     </strong>
                   </div>
                   <p>
                     {hasTrackingSummary
-                      ? `${reviewFlags.length} frames are flagged for review.`
+                      ? `${highConfidenceAnnotations} high-confidence drafts · ${lowConfidenceFlags} low-confidence · ${noDetectionFlags} no detection · ${openReviewFlags.length} flags open.`
                       : 'Run Track full or Next 60 to generate tracking results.'}
                   </p>
                 </div>
@@ -2548,7 +3037,7 @@ export default function Home() {
                     type="button"
                   >
                     <MousePointer2 size={16} aria-hidden="true" />
-                    Mark reviewed correction
+                    Record correction
                   </button>
                   <button
                     className="wide-action primary"
@@ -2557,6 +3046,15 @@ export default function Home() {
                   >
                     <Download size={16} aria-hidden="true" />
                     Summary CSV
+                  </button>
+                  <button
+                    className="wide-action"
+                    disabled={Object.keys(sessionResults).length === 0}
+                    onClick={() => download(cohortCsv, 'barnesai-cohort-summary.csv', 'text/csv')}
+                    type="button"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    Cohort CSV ({Object.keys(sessionResults).length})
                   </button>
                   <button
                     className="wide-action"
@@ -2573,7 +3071,7 @@ export default function Home() {
 
             <div className="strategy">
               <div className="strategy-heading">
-                <strong>Search strategy</strong>
+                <strong>Search strategy (behavior label)</strong>
                 <select
                   aria-label="Search strategy override"
                   onChange={(event) => setStrategyOverride(event.target.value as 'auto' | SearchStrategy)}
@@ -2585,13 +3083,18 @@ export default function Home() {
                   <option value="random">Random</option>
                 </select>
               </div>
+              <p>
+                Classify the completed trial after tracking. Keep Auto for the draft suggestion,
+                or choose Spatial, Serial, or Random after reviewing the video and events. This
+                changes only the exported behavior label, not the numeric results.
+              </p>
               <span>
                 {finalStrategy
                   ? `${finalStrategy} · ${autoStrategy.reason}`
                   : autoStrategy.reason}
               </span>
             </div>
-          </section>
+          </details>
         </section>
 
         <aside className="panel order-3 guide-panel">
@@ -2603,35 +3106,27 @@ export default function Home() {
           <ol className="guide-steps">
             <li>
               <strong>Load video</strong>
-              <span>Use Load video, or choose a sample trial from the video queue.</span>
+              <span>Use Add videos to select a batch. Each card is one trial; select a card to review it.</span>
             </li>
             <li>
-              <strong>Align maze</strong>
-              <span>Use Maze to move the platform. Use Well to drag individual wells.</span>
+              <strong>Apply or calibrate settings</strong>
+              <span>Load a preset. If needed, use Maze for the platform and Well for individual wells.</span>
             </li>
             <li>
-              <strong>Set target</strong>
-              <span>Select Target, then click the escape well on the overlay.</span>
+              <strong>Set target and check the overlay</strong>
+              <span>Select Target, click the escape well, then use Body or Nose only to correct a draft point.</span>
             </li>
             <li>
-              <strong>Edit mouse</strong>
-              <span>Use Body and Nose to correct nodes. Use Add nodes for another mouse.</span>
+              <strong>Track the trial</strong>
+              <span>Use Track full for the complete video. Next 60 is a short test pass.</span>
             </li>
             <li>
-              <strong>Track video</strong>
-              <span>Run Track full for the whole video, or Next 60 for a short pass.</span>
+              <strong>Review flagged frames</strong>
+              <span>Open Flags, select a frame, correct its overlay, then choose Unflag &amp; next.</span>
             </li>
             <li>
-              <strong>Review flags</strong>
-              <span>Use Next flagged to inspect weak frames, then Mark reviewed.</span>
-            </li>
-            <li>
-              <strong>Check lists</strong>
-              <span>Use the right dock tabs: Mice, Wells, and Events.</span>
-            </li>
-            <li>
-              <strong>Export</strong>
-              <span>Use Download CSV below the video, or the JSON icon above it.</span>
+              <strong>Finalize and export</strong>
+              <span>Export trial Summary/Event CSVs, or Cohort CSV after processing multiple videos.</span>
             </li>
           </ol>
         </aside>
