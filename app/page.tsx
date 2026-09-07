@@ -593,6 +593,8 @@ export default function Home() {
   const currentReviewFlag = reviewFlags.find(
     (flag) => flag.frame === currentFrame && !flag.reviewed,
   );
+  const nextOpenReviewFlag =
+    openReviewFlags.find((flag) => flag.frame > currentFrame) ?? openReviewFlags[0] ?? null;
   const frameAnnotations = useMemo(
     () => annotationStore[activeVideoKey] ?? {},
     [activeVideoKey, annotationStore],
@@ -915,9 +917,18 @@ export default function Home() {
   function seekToFrame(frame: number) {
     const safeFrame = clamp(frame, 0, totalFrames - 1);
     const nextTime = safeFrame / fps;
-    setCurrentTime(nextTime);
     setFrameAnalysis({ ...initialAnalysis, source: uploadedVideo ? 'video' : 'sample' });
-    if (videoRef.current) videoRef.current.currentTime = nextTime;
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      setIsPlaying(false);
+      if ('fastSeek' in video && typeof video.fastSeek === 'function') {
+        video.fastSeek(nextTime);
+      } else {
+        video.currentTime = nextTime;
+      }
+    }
+    setCurrentTime(nextTime);
   }
 
   function stepFrame(delta: number) {
@@ -1399,10 +1410,8 @@ export default function Home() {
   }
 
   function jumpToNextFlaggedFrame() {
-    const nextFlag =
-      openReviewFlags.find((flag) => flag.frame > currentFrame) ?? openReviewFlags[0];
-    if (!nextFlag) return;
-    seekToFrame(nextFlag.frame);
+    if (!nextOpenReviewFlag) return;
+    seekToFrame(nextOpenReviewFlag.frame);
   }
 
   async function trackFrameRange(maxFrames: number, label: string) {
@@ -1952,8 +1961,8 @@ export default function Home() {
               <p>
                 {currentReviewFlag
                   ? `Current frame: ${currentReviewFlag.reason.replace('-', ' ')}`
-                  : openReviewFlags.length > 0
-                    ? `Next flagged frame: ${openReviewFlags[0].frame + 1}`
+                  : nextOpenReviewFlag
+                    ? `Next flagged frame: ${nextOpenReviewFlag.frame + 1}`
                     : 'No flagged frames'}
               </p>
               <div className="review-actions">
@@ -2037,6 +2046,7 @@ export default function Home() {
                     }}
                     onPause={() => setIsPlaying(false)}
                     onPlay={() => setIsPlaying(true)}
+                    onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
                     onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
                     ref={videoRef}
                     src={uploadedVideo.url}
