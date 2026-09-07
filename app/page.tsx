@@ -490,6 +490,8 @@ export default function Home() {
   );
   const firstTargetEvent = eventLog.find((event) => event.hole === targetHole);
   const firstEscapeEvent = eventLog.find((event) => event.type === 'escape');
+  const hasDerivedResults = eventLog.length > 0;
+  const hasTrackingSummary = trackingRun.total > 0;
   const primaryErrors = eventLog.filter(
     (event) =>
       event.type === 'investigation' &&
@@ -499,12 +501,14 @@ export default function Home() {
   const totalErrors = eventLog.filter(
     (event) => event.type === 'investigation' && event.hole !== targetHole,
   ).length;
-  const derivedPrimaryLatency = firstTargetEvent?.timeSeconds ?? selected.primaryLatency;
-  const derivedTotalLatency = firstEscapeEvent?.timeSeconds ?? selected.totalLatency;
+  const derivedPrimaryLatency = firstTargetEvent?.timeSeconds ?? null;
+  const derivedTotalLatency = firstEscapeEvent?.timeSeconds ?? null;
   const adjustedErrors = Math.max(
     0,
-    eventLog.length > 0 ? totalErrors : Math.round(selected.totalErrors + (1.2 - distance) * 2 - dwell),
+    hasDerivedResults ? totalErrors : 0,
   );
+  const resultTrackedPercent =
+    hasTrackingSummary ? (trackingRun.saved / Math.max(1, trackingRun.total)) * 100 : null;
   const csv = useMemo(() => {
     const rows = [
       [
@@ -529,16 +533,16 @@ export default function Home() {
         sample.durationSeconds.toFixed(2),
         sample.fpsLabel,
         sample.id === selected.id ? targetHole : sample.targetHole,
-        sample.id === selected.id ? derivedPrimaryLatency.toFixed(1) : sample.primaryLatency.toFixed(1),
-        sample.id === selected.id ? derivedTotalLatency.toFixed(1) : sample.totalLatency.toFixed(1),
-        sample.id === selected.id && eventLog.length > 0 ? primaryErrors : sample.primaryErrors,
-        sample.id === selected.id ? adjustedErrors : sample.totalErrors,
+        sample.id === selected.id && derivedPrimaryLatency !== null ? derivedPrimaryLatency.toFixed(1) : '',
+        sample.id === selected.id && derivedTotalLatency !== null ? derivedTotalLatency.toFixed(1) : '',
+        sample.id === selected.id && hasDerivedResults ? primaryErrors : '',
+        sample.id === selected.id && hasDerivedResults ? adjustedErrors : '',
         sample.id === selected.id ? eventLog.length : 0,
-        sample.pathCm.toFixed(1),
-        sample.speedCms.toFixed(1),
-        sample.targetQuadrantPct.toFixed(1),
-        sample.strategy,
-        sample.trackedPct.toFixed(1),
+        '',
+        '',
+        '',
+        '',
+        sample.id === selected.id && resultTrackedPercent !== null ? resultTrackedPercent.toFixed(1) : '',
         sample.id === selected.id ? corrections : 0,
       ]),
     ];
@@ -549,7 +553,9 @@ export default function Home() {
     derivedPrimaryLatency,
     derivedTotalLatency,
     eventLog.length,
+    hasDerivedResults,
     primaryErrors,
+    resultTrackedPercent,
     selected.id,
     targetHole,
   ]);
@@ -592,7 +598,7 @@ export default function Home() {
           name: 'read_current_trial',
           title: 'Read current trial',
           description:
-            'Return the currently selected Barnes maze trial, thresholds, ROI, corrections, and draft metrics.',
+            'Return the currently selected Barnes maze trial, thresholds, ROI, corrections, and generated metrics.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -625,18 +631,18 @@ export default function Home() {
                 currentFrameFlag: currentReviewFlag ?? null,
               },
               quality: {
-                trackedPercent: selected.trackedPct,
-                failedFrames: selected.failureFrames,
+                trackedPercent: resultTrackedPercent,
+                failedFrames: reviewFlags.length,
               },
               metrics: {
                 primaryLatencySeconds: derivedPrimaryLatency,
                 totalLatencySeconds: derivedTotalLatency,
-                primaryErrors: eventLog.length > 0 ? primaryErrors : selected.primaryErrors,
-                totalErrors: adjustedErrors,
-                pathCm: selected.pathCm,
-                speedCmPerSecond: selected.speedCms,
-                targetQuadrantPercent: selected.targetQuadrantPct,
-                strategy: selected.strategy,
+                primaryErrors: hasDerivedResults ? primaryErrors : null,
+                totalErrors: hasDerivedResults ? adjustedErrors : null,
+                pathCm: null,
+                speedCmPerSecond: null,
+                targetQuadrantPercent: null,
+                strategy: null,
               },
             };
           },
@@ -657,6 +663,7 @@ export default function Home() {
     derivedTotalLatency,
     eventLog,
     events,
+    hasDerivedResults,
     holes,
     holeScale,
     layers,
@@ -674,6 +681,7 @@ export default function Home() {
     openReviewFlags.length,
     currentReviewFlag,
     primaryErrors,
+    resultTrackedPercent,
     trackingRun,
   ]);
 
@@ -1493,8 +1501,11 @@ export default function Home() {
       derivedMetrics: {
         primaryLatencySeconds: derivedPrimaryLatency,
         totalLatencySeconds: derivedTotalLatency,
-        primaryErrors: eventLog.length > 0 ? primaryErrors : selected.primaryErrors,
-        totalErrors: adjustedErrors,
+        primaryErrors: hasDerivedResults ? primaryErrors : null,
+        totalErrors: hasDerivedResults ? adjustedErrors : null,
+        pathCm: null,
+        speedCmPerSecond: null,
+        trackedPercent: resultTrackedPercent,
       },
       reviewQueue: {
         flags: reviewFlags,
@@ -1600,27 +1611,26 @@ export default function Home() {
                 </span>
               </button>
             ) : null}
-            {samples.map((sample) => (
-              <button
-                aria-label={`Select ${sample.fileName}`}
-                className={`trial-card ${sample.id === selected.id && !uploadedVideo ? 'active' : ''}`}
-                key={sample.id}
-                onClick={() => {
-                  setUploadedVideo(null);
-                  selectSample(sample);
-                }}
-                type="button"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img alt="" src={sample.frame} />
-                <span>
-                  <strong>{sample.fileName}</strong>
-                  <small>
-                    {sample.frames.toLocaleString()} frames · {formatSeconds(sample.durationSeconds)}
-                  </small>
-                </span>
-              </button>
-            ))}
+            {!uploadedVideo
+              ? samples.map((sample) => (
+                  <button
+                    aria-label={`Select ${sample.fileName}`}
+                    className={`trial-card ${sample.id === selected.id ? 'active' : ''}`}
+                    key={sample.id}
+                    onClick={() => selectSample(sample)}
+                    type="button"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img alt="" src={sample.frame} />
+                    <span>
+                      <strong>{sample.fileName}</strong>
+                      <small>
+                        {sample.frames.toLocaleString()} frames · {formatSeconds(sample.durationSeconds)}
+                      </small>
+                    </span>
+                  </button>
+                ))
+              : null}
             <div className="status-strip" aria-label="Workflow status">
               {statuses.map((status) => (
                 <span className={status.tone} key={status.name}>
@@ -2214,39 +2224,55 @@ export default function Home() {
           <section className="results-section">
             <div className="panel-heading">
               <h2>Results</h2>
-              <span>{eventLog.length > 0 ? 'event-derived' : 'draft metrics'}</span>
+              <span>{eventLog.length > 0 ? 'event-derived' : 'pending'}</span>
             </div>
 
             <div className="results-grid">
               <div className="metric-grid">
-                <Metric label="Primary latency" value={`${derivedPrimaryLatency.toFixed(1)} s`} />
-                <Metric label="Total latency" value={`${derivedTotalLatency.toFixed(1)} s`} />
+                <Metric
+                  label="Primary latency"
+                  value={derivedPrimaryLatency !== null ? `${derivedPrimaryLatency.toFixed(1)} s` : 'Not generated'}
+                />
+                <Metric
+                  label="Total latency"
+                  value={derivedTotalLatency !== null ? `${derivedTotalLatency.toFixed(1)} s` : 'Not generated'}
+                />
                 <Metric
                   label="Primary errors"
-                  value={String(eventLog.length > 0 ? primaryErrors : selected.primaryErrors)}
+                  value={hasDerivedResults ? String(primaryErrors) : 'Not generated'}
                 />
-                <Metric label="Total errors" value={String(adjustedErrors)} />
+                <Metric
+                  label="Total errors"
+                  value={hasDerivedResults ? String(adjustedErrors) : 'Not generated'}
+                />
                 <Metric label="Events" value={String(eventLog.length)} />
-                <Metric label="Path length" value={`${selected.pathCm.toFixed(1)} cm`} />
-                <Metric label="Speed" value={`${selected.speedCms.toFixed(1)} cm/s`} />
+                <Metric label="Path length" value="Not generated" />
+                <Metric label="Speed" value="Not generated" />
               </div>
 
               <div className="result-notes">
                 <div className="quality-box">
                   <div>
                     <CircleDot size={18} aria-hidden="true" />
-                    <strong>{selected.trackedPct.toFixed(1)}% frames tracked</strong>
+                    <strong>
+                      {resultTrackedPercent !== null
+                        ? `${resultTrackedPercent.toFixed(1)}% frames tracked`
+                        : 'Tracking not run'}
+                    </strong>
                   </div>
                   <p>
-                    {selected.failureFrames} frames require review. Manual correction
-                    records are stored separately from automatic draft values.
+                    {hasTrackingSummary
+                      ? `${reviewFlags.length} frames are flagged for review.`
+                      : 'Run Track full or Next 60 to generate tracking results.'}
                   </p>
                 </div>
 
-                <div className="warning-box">
-                  <AlertTriangle size={18} aria-hidden="true" />
-                  <p>{selected.caveat}</p>
-                </div>
+                {reviewFlags.length > 0 ? (
+                  <div className="warning-box">
+                    <AlertTriangle size={18} aria-hidden="true" />
+                    <p>Review flagged frames before treating exported metrics as final.</p>
+                  </div>
+                ) : null}
 
                 <div className="result-actions">
                   <button
@@ -2269,13 +2295,15 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="strategy">
-              <strong>{selected.strategy}</strong>
-              <span>
-                Classified from target path directness, ring-following order,
-                and center crossings. User can override before export.
-              </span>
-            </div>
+            {hasDerivedResults ? (
+              <div className="strategy">
+                <strong>Event-derived metrics</strong>
+                <span>
+                  Latency and errors are derived from detected well visits. Path length,
+                  speed, and search strategy still need computed tracking metrics.
+                </span>
+              </div>
+            ) : null}
           </section>
         </section>
 
