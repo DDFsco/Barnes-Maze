@@ -6,6 +6,8 @@ Live URL: [barnes-track.vercel.app](https://barnes-track.vercel.app/)
 
 Demo video: [BarnesTrack workflow recording](demo/barnestrack-demo.mp4)
 
+![BarnesTrack workspace showing the video review, annotation tools, and guided workflow](docs/barnestrack-workspace.png)
+
 ## What It Does
 
 - Loads multiple local videos by drop, file selection, or folder selection. Video data stays in the browser.
