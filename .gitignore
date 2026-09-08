@@ -11,11 +11,6 @@
 # testing
 /coverage
 
-# next.js
-/.next/
-/.vinext/
-/out/
-
 # misc
 .DS_Store
 *.pem
@@ -33,7 +28,10 @@ yarn-error.log*
 .vercel
 next-env.d.ts
 /dist/
+/.next/
+/.vinext/
 /.wrangler/
 /outputs/
 /work/
 *.tar.gz
+*.tsbuildinfo

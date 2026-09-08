@@ -1,5 +1,3 @@
-'use client';
-
 import {
   AlertTriangle,
   ChevronLeft,
@@ -18,7 +16,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createXlsxWorkbook, type WorkbookSheet } from '@/lib/xlsx';
+import { createXlsxWorkbook, type WorkbookSheet } from '../lib/xlsx';
 
 type Point = { x: number; y: number };
 type Platform = Point & { r: number };

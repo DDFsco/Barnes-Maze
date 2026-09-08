@@ -1,120 +1,82 @@
 # BarnesTrack
 
-BarnesTrack is a browser-first Barnes maze analysis workbench for the Salk AIRC RSE take-home Task 1. It is designed for students and facility staff who need to turn behavior videos into reviewable metrics and spreadsheet exports without touching a terminal in day-to-day use.
+BarnesTrack is a browser-first workbench for reviewing Barnes maze videos, creating transparent tracking drafts, correcting uncertain frames, and exporting trial-level data. It is designed for students and core-facility staff who should not need a terminal, Python environment, account, or GPU to review a cohort.
 
-Live URL: https://barnestrack.ddfsco.chatgpt.site
+Live URL: pending Vercel deployment.
 
 Demo video: pending recording.
 
-## Current Scope
+## What It Does
 
-This is the first runnable P0 slice. It includes:
+- Loads multiple local videos by drop, file selection, or folder selection. Video data stays in the browser.
+- Places and edits the platform, wells, target well, and individual well radii on a frame-accurate video overlay.
+- Generates browser-side classical-CV body and nose-proxy drafts with `Track full` or `Next 60` and a visible progress indicator.
+- Groups low-confidence and missing detections into review ranges instead of silently filling them.
+- Lets the reviewer scrub, correct body or nose nodes, mark visit/escape events, and preserve manual corrections separately from drafts.
+- Computes latency, errors, path length, speed, target-quadrant occupancy, and a reviewable spatial/serial/random strategy label.
+- Shows a trajectory overlay, tracking-quality timeline, and occupancy map.
+- Exports trial and cohort CSV/XLSX reports, event CSV, and a reloadable project JSON file.
 
-- A static web app shell for Barnes maze analysis.
-- The three Salk sample trials represented with committed still frames.
-- Multi-video local MP4 sessions through file selection, folder selection, or drag and drop.
-- Video underlay with an interactive SVG annotation overlay.
-- Frame controls for previous frame, next frame, play/pause, jump-to-frame, FPS, and timestamp scrubbing.
-- Editable target-well and detection-threshold controls.
-- Live ROI controls for platform center/radius, real-world platform diameter, well-ring scale, well-map rotation, addable/removable wells, draggable individual wells, per-well radius, target selection, and mouse body/nose proxy corrections.
-- Frame-level manual annotation records for mouse skeletons and visit/escape events, persisted locally in browser storage.
-- Browser-side current-frame extraction through a hidden canvas, with a draft dark-component detector that can seed body/nose correction points for the active frame.
-- A `Track full` pass for local MP4s, plus a shorter `Next 60` debug pass, both showing progress while storing per-frame body/nose annotations for review.
-- A review queue for failed or low-confidence frames, with controls to jump to the next flagged frame and mark reviewed corrections.
-- Draft well-visit event detection from nose proxy dwell time, with event-derived latency/error metrics when events are available.
-- Trajectory-derived path length, speed, target-quadrant occupancy, and draft search-strategy classification with a visible manual override.
-- Per-trial metrics, per-event detail, and tracking-quality indicators.
-- Manual correction count tracking.
-- Per-trial CSV/XLSX, cohort-summary CSV/XLSX, event-detail CSV, and reloadable project JSON downloads from the browser.
-- Project restore: saved annotations, review flags, settings, and results reconnect when the same local video files are selected again.
-- A small WebMCP-compatible agent surface for reading the selected trial and staging event thresholds.
-- Unit tests for core Barnes maze metric calculations.
-
-Raw sample videos are not committed here. They remain in the original Salk repository.
+The bundled sample state uses still frames from the three Salk clips. The original videos are intentionally not committed; download them from the [Salk AIRC take-home repository](https://github.com/salk-airc/rse-takehome-2026/tree/main/data/barnes-maze).
 
 ## Run Locally
 
-Use Node 22.13 or newer. On this machine, the Codex bundled Node works:
+Requires Node.js 22.13 or newer.
 
 ```bash
-cd /Users/ddfsco/Documents/ChatGPT/Ray/barnesai
-PATH=/Users/ddfsco/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH npm install
-PATH=/Users/ddfsco/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH npm run dev
-```
-
-Then open:
-
-```text
-http://localhost:3000/
-```
-
-If you use your own Node 22+ install, normal commands are enough:
-
-```bash
-npm install
+git clone <your-fork-url>
+cd barnestrack
+npm ci
 npm run dev
 ```
 
-## How to Operate
+Open `http://localhost:5173`.
 
-1. Open the app.
-2. To use the built-in sample state, choose `test50.mp4`, `test51.mp4`, or `test53.mp4` from the trial strip above the video workspace.
-3. To load a real local cohort, click `Add videos`, `Add folder`, or drag the MP4 files into the session strip. Each video becomes one selectable trial card.
-4. Review the platform boundary, well markers, target well, and the preset body/nose skeleton over the frame/video.
-5. Use `Prev`, `Next`, jump-to-frame, or the `Video time` scrubber to move through the trial. Left/right arrow keys step by frame, and space toggles playback.
-6. Use the tool and layer dock immediately to the left of the video window, like a drawing app:
-   - Layer checkboxes show or hide Platform boundary, Wells, Mice / Skeleton, and Events.
-   - `Add nodes`: click the video overlay to create another mouse skeleton with body and nose nodes.
-   - `Select`: click near an existing skeleton to select and drag that body/nose pair together.
-   - `Maze`: drag the full platform and well map together.
-   - `Well`: drag the nearest well marker to the true hole center.
-   - `Target`: click a well to mark it as the target.
-   - `Body`: click or drag the selected skeleton's body point for the current frame.
-   - `Nose`: click or drag the selected skeleton's nose-proxy point for the current frame.
-   - `Visit`: click near a well to add a manual investigation event.
-   - `Escape`: click near a well to add a manual escape event.
-7. Use the status strip below the trial queue for current-frame coordinates, frame analysis, tracking progress, and the review queue. `Analyze frame`, `Track full`, `Next 60`, `Stop`, `Next flagged`, and `Mark reviewed` live there.
-8. Use the tabbed dock immediately to the right of the video window to switch between `Mice`, `Wells`, and `Events`.
-9. In `Mice`, select each mouse and inspect body/nose coordinates. `Add` creates another skeleton, `Remove` deletes the selected mouse overlay, and `Clear frame` clears the current frame annotations.
-10. In `Wells`, select a well component. `Add` creates another well on the maze ring; `Remove` deletes the selected well while keeping at least one well available for target/event logic. Use `Selected radius` to resize the selected well marker/detection region.
-11. In `Events`, inspect detected visits. Entries are generated when the nose proxy remains inside a well long enough to pass the dwell threshold; target-well visits are shown as escape events. Click an event to jump to its start frame.
-12. After loading a real MP4, click `Track full` to automatically seek from the current frame to the end of the video and save draft body/nose annotations for detected frames. Use `Next 60` for a shorter test pass.
-13. Use `Review queue` to inspect frames where tracking failed or confidence was low.
-14. Click `Save` above the video panel to mark the current frame as a saved manual correction. Click `Clear frame` to remove the current frame's skeleton/event annotations without clearing other frames.
-15. Adjust dwell-time and nose-proxy distance thresholds. Event-derived latency/error metrics update immediately when tracked points exist.
-16. Use platform X/Y, radius, platform diameter, hole-ring scale, and rotation controls for precise numeric ROI adjustment.
-17. Review the Results panel. `Auto` assigns a draft spatial/serial/random search strategy from event order and trajectory context; choose a manual strategy if the automatic label is not defensible.
-18. Click `Summary CSV` or `Trial XLSX` for one trial, `Event CSV` for per-event details, or `Cohort CSV` / `Cohort XLSX` for one summary row per completed local trial.
-19. Use the JSON icon above the video panel to save the project. Later, choose `Open project`, then add the same local video files to reconnect the saved annotations and review state.
-
-## Design Details
-
-The product is intentionally a working surface, not a landing page. The first viewport exposes the actual workflow: session selection, video review, layer-based ROI/skeleton overlays, thresholds, quality status, metrics, correction, and export.
-
-The scientific stance is conservative:
-
-- Body tracking and event detection must flag uncertainty.
-- Nose/head is represented as a `nose_proxy`, not true pose tracking.
-- The current-frame and short-run detectors are local classical CV draft helpers, not trained pose-estimation models.
-- Manual corrections are tracked separately from automatic output.
-- Metrics live in an independent module rather than inside UI code.
-- The app assumes local browser processing; no research data leaves the user's machine in this slice.
-
-## What Leaves the User's Machine
-
-In this current implementation, nothing is uploaded. The app runs in the browser, uses committed sample still frames, stores manual per-frame corrections in local browser storage, and creates downloadable CSV/JSON files locally. A future version that processes user-selected videos should keep frame extraction and classical CV in the browser by default.
-
-## Keys and Cost
-
-No API key is required. There are no per-run costs in the current design. If a future optional ML-backed tracker is added, it must have a local/sample fallback and a documented cost estimate.
-
-## Development Checks
+Run the checks used before release:
 
 ```bash
+npm run lint
 npm test
 npm run build
 ```
 
-## Known Submission Gaps
+## Deploy On Vercel
 
-This is not yet a complete take-home submission. The next implementation steps are automatic platform/hole registration, trajectory smoothing/outlier controls, richer quality visualizations, XLSX export, committed generated outputs for all three sample videos, accessibility pass, and walkthrough video.
+1. Push this repository to GitHub.
+2. Import the repository in Vercel.
+3. Set Node.js to 22.13 or newer.
+4. Use the detected Vite preset with build command `npm run build` and output directory `dist`.
+5. No environment variables, database, API key, or server-side video upload is required.
+
+## Review Workflow
+
+1. Drop one or more local videos into the header import area, or choose **Add folder**.
+2. Choose a session video from the queue, then load a saved preset or calibrate the maze with **Maze** and **Well**.
+3. Select **Target** and click the escape well. Use **Nose / Body** to correct either point on the current frame.
+4. Run **Next 60** to validate a short range, then use **Track full** for the trial.
+5. Open **Flags** to review grouped low-confidence or missing-detection ranges. Correct the overlay and choose **Unflag & next** only after visual review.
+6. Use **Visit** or **Escape** only to add a manually verified event. Automated escape candidates are labeled as possible events until reviewed.
+7. Inspect the result metrics, quality timeline, occupancy plot, and behavior strategy rationale. Override strategy only after reviewing the recording.
+8. Export a trial Summary CSV/XLSX and Event CSV. After several trials complete, export the cohort CSV/XLSX. Save the project JSON to restore local annotations after reconnecting the same videos.
+
+## Scientific Scope
+
+BarnesTrack deliberately favors honest, inspectable drafts over false precision. The tracker uses local classical computer vision and labels the head estimate as a `nose_proxy`, not a trained pose result. Missing detections are exposed as review ranges; they are never silently interpolated into a trajectory.
+
+Investigation is defined by the visible nose-proxy distance and dwell-time controls. Escape is distinct from investigation and should be confirmed visually when the animal disappears at a target well. Metrics and strategy labels update from the current draft and corrections, but require reviewer judgment before use as validated scientific results.
+
+## Privacy And Cost
+
+Selected videos, extracted frames, tracking calculations, local annotations, and downloads remain in the user's browser. The app has no API key, account, database, or per-run cost.
+
+## Submission Evidence
+
+The final submission will include a 2-3 minute demo covering `test50`, `test51`, and `test53`, plus real CSV/XLSX outputs generated from those three videos. Those artifacts are intentionally not committed until the end-to-end runs are recorded and checked.
+
+## Limitations
+
+See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for tracking, persistence, performance, and validation constraints.
+
+## AI Notes
+
+See [AI_NOTES.md](AI_NOTES.md) for the implementation approach, judgment calls, and validation steps.
