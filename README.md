@@ -63,7 +63,18 @@ Selected videos, extracted frames, tracking calculations, local annotations, and
 
 ## Submission Evidence
 
-The final submission includes a 2-3 minute demo covering `test50`, `test51`, and `test53`, plus validated browser-generated CSV/XLSX outputs. The committed artifacts are organized in [demo-outputs](demo-outputs): each trial has a summary CSV, event-detail CSV, and trial-report XLSX; the folder root contains the cohort CSV/XLSX.
+The [demo recording](demo/barnestrack-demo.mp4) shows the end-to-end browser workflow. It covers loading the three supplied clips (`test50`, `test51`, and `test53`), defining or reusing ROIs, tracking, reviewing a correction, detecting events, and downloading results.
+
+Validated browser-generated outputs are committed in [demo-outputs](demo-outputs): each trial has a tidy summary CSV, event-detail CSV, and trial-report XLSX; the folder root contains cohort CSV/XLSX summaries. The source sample videos are intentionally not committed; the assignment data repository is linked above.
+
+## Validation
+
+- Verified the deployed app on a 2019-era laptop without a GPU.
+- Verified the interface at 200% browser zoom.
+- Ran the complete workflow against all three provided clips and checked the committed CSV/XLSX exports.
+- Ran `npm run lint`, `npm test`, and `npm run build` before release.
+
+The product remains deliberately review-first: automated annotations are drafts, failed or uncertain ranges remain visible, and manual corrections update downstream results.
 
 ## Limitations
 
