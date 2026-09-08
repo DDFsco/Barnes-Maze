@@ -1,0 +1,8 @@
+video,event_id,event_type,source,well,start_frame_1_based,end_frame_1_based,time_seconds,duration_seconds,event_confidence,detection_confidence,review_status,is_terminal,analysis_version
+test51.mp4,auto-18-184-267,investigation,auto,18,184,267,6.100,2.800,0.503,0.907,auto-draft,false,classical-cv-v2-background
+test51.mp4,auto-19-268-393,investigation,auto,19,268,393,8.900,4.200,0.556,0.907,auto-draft,false,classical-cv-v2-background
+test51.mp4,auto-18-394-729,investigation,auto,18,394,729,13.100,11.200,0.845,0.873,auto-draft,false,classical-cv-v2-background
+test51.mp4,auto-17-730-821,investigation,auto,17,730,821,24.300,3.067,0.620,0.908,auto-draft,false,classical-cv-v2-background
+test51.mp4,auto-4-972-1082,investigation,auto,4,972,1082,32.367,3.700,0.576,0.908,auto-draft,false,classical-cv-v2-background
+test51.mp4,auto-5-1083-1440,investigation,auto,5,1083,1440,36.067,11.933,0.765,0.906,auto-draft,false,classical-cv-v2-background
+test51.mp4,manual-escape-5-1441,escape,manual,5,1441,1441,48.000,0.000,1.000,1.000,manual,true,classical-cv-v2-background

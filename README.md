@@ -63,7 +63,7 @@ Selected videos, extracted frames, tracking calculations, local annotations, and
 
 ## Submission Evidence
 
-The final submission will include a 2-3 minute demo covering `test50`, `test51`, and `test53`, plus real CSV/XLSX outputs generated from those three videos. Those artifacts are intentionally not committed until the end-to-end runs are recorded and checked.
+The final submission includes a 2-3 minute demo covering `test50`, `test51`, and `test53`, plus validated browser-generated CSV/XLSX outputs. The committed artifacts are organized in [demo-outputs](demo-outputs): each trial has a summary CSV, event-detail CSV, and trial-report XLSX; the folder root contains the cohort CSV/XLSX.
 
 ## Limitations
 

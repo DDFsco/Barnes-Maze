@@ -1,0 +1,4 @@
+video,analysis_status,duration_seconds,fps,frame_count,frames_processed,draft_annotations,open_review_flags,primary_latency_seconds,total_latency_seconds,primary_errors,total_errors,events_detected,path_cm,speed_cm_s,target_quadrant_percent,strategy,dwell_threshold_seconds,nose_proxy_distance_cm,platform_diameter_cm,well_count,analysis_version,smoothing_window_frames,max_gap_fill_frames,outlier_distance_px
+test53.mp4,complete,30.23,30.000,907,907,757,0,9.367,29.233,1,3,6,96.342,3.823,100.000,spatial,0.50,1.80,91.0,20,classical-cv-v2-background,0,0,90
+test51.mp4,complete,49.38,30.000,1481,1481,1469,0,36.067,48.000,5,5,7,191.522,3.882,48.264,serial,0.50,1.80,91.0,20,classical-cv-v2-background,0,0,90
+test50.mp4,complete,185.07,30.000,5552,5552,5402,0,6.600,185.033,0,61,67,1235.435,6.862,42.836,spatial,0.50,1.80,91.0,20,classical-cv-v2-background,0,0,90
