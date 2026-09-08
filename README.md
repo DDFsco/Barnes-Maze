@@ -2,7 +2,7 @@
 
 BarnesTrack is a browser-first Barnes maze analysis workbench for the Salk AIRC RSE take-home Task 1. It is designed for students and facility staff who need to turn behavior videos into reviewable metrics and spreadsheet exports without touching a terminal in day-to-day use.
 
-Live URL: https://barnesai.ddfsco.chatgpt.site
+Live URL: https://barnestrack.ddfsco.chatgpt.site
 
 Demo video: pending recording.
 
