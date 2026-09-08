@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'BarnesAI',
+  title: 'BarnesTrack',
   description:
     'Browser-first Barnes maze analysis with editable ROIs, transparent quality reports, and CSV exports.',
 };

@@ -143,7 +143,7 @@ body {
   }
 
   .panel-heading h2 {
-    @apply text-base font-semibold;
+    @apply inline-flex items-center gap-1 whitespace-nowrap text-base font-semibold;
   }
 
   .panel-heading span {
@@ -162,6 +162,27 @@ body {
 
   .wide-action {
     @apply mt-3 w-full;
+  }
+
+  .header-dropzone {
+    @apply flex min-h-10 min-w-48 cursor-pointer items-center gap-2 rounded-md border border-dashed border-primary/45 bg-primary/5 px-3 text-primary transition hover:border-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .header-dropzone.active {
+    @apply border-primary bg-primary/15;
+  }
+
+  .header-dropzone strong,
+  .header-dropzone small {
+    @apply block leading-tight;
+  }
+
+  .header-dropzone strong {
+    @apply text-sm font-medium;
+  }
+
+  .header-dropzone small {
+    @apply mt-0.5 text-xs text-muted-foreground;
   }
 
   .guide-panel {
@@ -309,7 +330,7 @@ body {
   }
 
   .frame-status-heading h3 {
-    @apply text-xs font-semibold leading-tight text-foreground;
+    @apply inline-flex items-center gap-1 text-xs font-semibold leading-tight text-foreground;
   }
 
   .frame-status-heading span,
@@ -391,7 +412,7 @@ body {
   }
 
   .canvas-dock h3 {
-    @apply mb-2 text-xs font-semibold uppercase text-muted-foreground;
+    @apply mb-2 inline-flex items-center gap-1 text-xs font-semibold uppercase text-muted-foreground;
   }
 
   .dock-section + .dock-section {
@@ -646,6 +667,36 @@ body {
     content: '-';
   }
 
+  .section-info {
+    @apply relative inline-flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .section-info-tooltip {
+    @apply pointer-events-none invisible absolute left-1/2 top-[calc(100%+0.5rem)] z-30 w-60 -translate-x-1/2 rounded-md border border-border bg-popover p-3 text-left text-xs font-normal leading-relaxed text-popover-foreground opacity-0 shadow-lg transition;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .section-info-left .section-info-tooltip {
+    @apply left-auto right-0 translate-x-0;
+  }
+
+  .section-info-right .section-info-tooltip {
+    @apply left-0 translate-x-0;
+  }
+
+  .section-info:hover .section-info-tooltip,
+  .section-info:focus .section-info-tooltip {
+    @apply visible opacity-100;
+  }
+
+  .section-info-tooltip strong {
+    @apply mb-1 block text-xs font-semibold;
+  }
+
+  .section-info-tooltip ul {
+    @apply list-disc space-y-1 pl-4;
+  }
+
   .settings-presets-heading {
     @apply mb-3 flex items-start justify-between gap-3 text-xs text-muted-foreground;
   }
@@ -757,16 +808,20 @@ body {
     @apply h-10 rounded-md border border-input bg-card px-2;
   }
 
+  .playback-controls {
+    @apply mt-2 grid gap-1.5 rounded-md border border-border bg-background p-2 text-sm;
+  }
+
   .frame-controls {
-    @apply mt-4 grid gap-2 rounded-md border border-border bg-background p-3 text-sm md:grid-cols-[auto_auto_auto_minmax(0,1fr)_minmax(10rem,auto)_110px];
+    @apply flex flex-wrap items-center gap-1.5;
   }
 
   .frame-controls button {
-    @apply inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-border bg-card px-3 font-medium transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+    @apply inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border bg-card px-2.5 font-medium transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
 
   .frame-controls label {
-    @apply flex min-w-0 items-center gap-2;
+    @apply flex items-center gap-1.5;
   }
 
   .frame-controls label span {
@@ -774,23 +829,45 @@ body {
   }
 
   .frame-controls input {
-    @apply h-10 min-w-0 rounded-md border border-input bg-card px-2;
+    @apply h-8 rounded-md border border-input bg-card px-2;
   }
 
-  .frame-controls .frame-count-readout output {
+  .frame-controls .jump-frame-control input {
+    @apply w-20;
+  }
+
+  .frame-controls .fps-control {
+    @apply ml-auto;
+  }
+
+  .frame-controls .fps-control input {
+    @apply w-16;
+  }
+
+  .frame-controls .frame-count-readout {
     @apply text-xs text-muted-foreground;
   }
 
   .scrub-control {
-    @apply mt-4 block rounded-md border border-border bg-background p-3 text-sm;
+    @apply grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2;
   }
 
   .scrub-control span {
-    @apply mb-2 block font-medium;
+    @apply whitespace-nowrap text-xs font-medium text-muted-foreground;
   }
 
   .scrub-control input {
     @apply w-full;
+  }
+
+  @media (max-width: 42rem) {
+    .frame-controls .fps-control {
+      @apply ml-0;
+    }
+
+    .scrub-control {
+      @apply grid-cols-1 gap-1;
+    }
   }
 
   .roi-note {
@@ -843,7 +920,7 @@ body {
   }
 
   .result-actions {
-    @apply grid gap-2 sm:grid-cols-2 xl:grid-cols-1;
+    @apply grid gap-2 sm:grid-cols-2 lg:grid-cols-3;
   }
 
   .result-actions .wide-action {
@@ -852,6 +929,14 @@ body {
 
   .result-actions .wide-action:disabled {
     @apply cursor-not-allowed opacity-45;
+  }
+
+  .result-export {
+    @apply mt-4 rounded-md border border-border bg-background p-3;
+  }
+
+  .result-export h3 {
+    @apply mb-3 text-sm font-semibold;
   }
 
   .compact-summary {
@@ -1041,7 +1126,7 @@ body {
   }
 
   .object-panel-heading h3 {
-    @apply text-xs font-semibold uppercase text-muted-foreground;
+    @apply inline-flex items-center gap-1 text-xs font-semibold uppercase text-muted-foreground;
   }
 
   .object-panel-heading span {

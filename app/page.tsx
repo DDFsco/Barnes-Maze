@@ -9,11 +9,13 @@ import {
   Download,
   FileJson,
   FolderOpen,
+  Info,
   MousePointer2,
   Pause,
   Play,
   RotateCcw,
   Save,
+  Upload,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createXlsxWorkbook, type WorkbookSheet } from '@/lib/xlsx';
@@ -45,8 +47,6 @@ type ToolMode =
   | 'move-maze'
   | 'move-hole'
   | 'target'
-  | 'body'
-  | 'nose'
   | 'investigation'
   | 'escape';
 type ObjectPanelTab = 'mice' | 'wells' | 'events' | 'flagged';
@@ -55,8 +55,7 @@ type DragTarget =
   | { type: 'platform'; start: Point; origin: Platform }
   | { type: 'hole'; id: number }
   | { type: 'body'; skeletonId: number }
-  | { type: 'nose'; skeletonId: number }
-  | { type: 'skeleton'; skeletonId: number; start: Point; body: Point; nose: Point };
+  | { type: 'nose'; skeletonId: number };
 
 type Skeleton = {
   id: number;
@@ -113,6 +112,12 @@ type FrameAnalysis = {
   nose?: Point;
 };
 
+type BackgroundModel = {
+  width: number;
+  height: number;
+  luminance: Float32Array;
+};
+
 type TrackingRun = {
   status: 'idle' | 'running' | 'done' | 'error';
   processed: number;
@@ -128,10 +133,19 @@ type ReviewFlag = {
   reviewed: boolean;
 };
 
+type ReviewGroup = {
+  startFrame: number;
+  endFrame: number;
+  reason: ReviewFlag['reason'];
+  confidence: number;
+  flags: ReviewFlag[];
+};
+
 type LayerVisibility = {
   maze: boolean;
   wells: boolean;
   skeletons: boolean;
+  trajectory: boolean;
   events: boolean;
 };
 
@@ -223,7 +237,7 @@ const samples: SampleVideo[] = [
     speedCms: 3.9,
     targetQuadrantPct: 38.5,
     strategy: 'serial',
-    caveat: 'Mouse partly merges with the lower rim and adjacent hole.',
+    caveat: 'Animal partly merges with the lower rim and adjacent hole.',
   },
   {
     id: 'test51',
@@ -276,13 +290,11 @@ const samples: SampleVideo[] = [
 ];
 
 const toolModes: Array<{ id: ToolMode; label: string }> = [
-  { id: 'select', label: 'Select' },
+  { id: 'select', label: 'Nose / Body' },
   { id: 'add-nodes', label: 'Add nodes' },
   { id: 'move-maze', label: 'Maze' },
   { id: 'move-hole', label: 'Well' },
   { id: 'target', label: 'Target' },
-  { id: 'body', label: 'Body' },
-  { id: 'nose', label: 'Nose' },
   { id: 'investigation', label: 'Visit' },
   { id: 'escape', label: 'Escape' },
 ];
@@ -404,7 +416,7 @@ function detectEventLog(
     const durationFrames = active.endFrame - active.startFrame + 1;
     if (durationFrames >= minFrames) {
       autoEvents.push({
-        id: `auto-${active.hole}-${active.startFrame}-${active.endFrame}`,
+        id: `auto-${active.hole}-${active.startFrame + 1}-${active.endFrame + 1}`,
         type: 'investigation',
         source: 'auto',
         hole: active.hole,
@@ -424,7 +436,7 @@ function detectEventLog(
     if (terminalReached) break;
     for (const event of annotation.events) {
       manualEvents.push({
-        id: `manual-${event.type}-${event.hole}-${event.frame}`,
+        id: `manual-${event.type}-${event.hole}-${event.frame + 1}`,
         type: event.type,
         source: 'manual',
         hole: event.hole,
@@ -481,7 +493,33 @@ function detectEventLog(
   }
 
   closeActive();
-  const hasManualEscape = manualEvents.some((event) => event.type === 'escape');
+
+  // Imported projects can contain historical duplicate clicks. Keep the event
+  // log valid even before those annotations are edited again in the UI.
+  const uniqueManualEvents = Array.from(
+    new Map(
+      manualEvents.map((event) => [
+        `${event.type}:${event.hole}:${event.startFrame}`,
+        event,
+      ]),
+    ).values(),
+  );
+  const manualEscape = uniqueManualEvents
+    .filter((event) => event.type === 'escape')
+    .sort(
+      (a, b) =>
+        a.startFrame - b.startFrame ||
+        Number(b.hole === targetWell) - Number(a.hole === targetWell) ||
+        a.hole - b.hole,
+    )[0];
+  const normalizedManualEvents = manualEscape
+    ? uniqueManualEvents.filter(
+        (event) =>
+          event.startFrame < manualEscape.startFrame ||
+          (event.type === 'escape' && event.id === manualEscape.id),
+      )
+    : uniqueManualEvents;
+  const hasManualEscape = Boolean(manualEscape);
   if (!hasManualEscape) {
     const missingFrames = new Set(
       reviewFlags
@@ -502,7 +540,7 @@ function detectEventLog(
       }
       if (consecutiveMissing >= requiredMissingFrames) {
         autoEvents.push({
-          id: `auto-escape-${targetEvent.endFrame}`,
+          id: `auto-escape-${targetEvent.endFrame + 1}`,
           type: 'escape',
           source: 'auto',
           hole: targetWell,
@@ -517,7 +555,9 @@ function detectEventLog(
       }
     }
   }
-  return [...manualEvents, ...autoEvents].sort((a, b) => a.timeSeconds - b.timeSeconds);
+  return [...normalizedManualEvents, ...autoEvents].sort(
+    (a, b) => a.timeSeconds - b.timeSeconds || Number(b.terminal) - Number(a.terminal),
+  );
 }
 
 function buildTrajectory(
@@ -594,6 +634,27 @@ function processTrajectory(
       y: nearby.reduce((sum, candidate) => sum + candidate.y, 0) / nearby.length,
     };
   });
+}
+
+function groupReviewFlags(flags: ReviewFlag[]): ReviewGroup[] {
+  const groups: ReviewGroup[] = [];
+  for (const flag of [...flags].sort((a, b) => a.frame - b.frame)) {
+    const previous = groups[groups.length - 1];
+    if (previous && previous.reason === flag.reason && flag.frame <= previous.endFrame + 1) {
+      previous.endFrame = flag.frame;
+      previous.confidence = Math.min(previous.confidence, flag.confidence);
+      previous.flags.push(flag);
+      continue;
+    }
+    groups.push({
+      startFrame: flag.frame,
+      endFrame: flag.frame,
+      reason: flag.reason,
+      confidence: flag.confidence,
+      flags: [flag],
+    });
+  }
+  return groups;
 }
 
 function pathLengthCm(points: TrajectoryPoint[], pixelsPerCm: number) {
@@ -674,16 +735,29 @@ function classifySearchStrategy(
 function makeSkeleton(id: number, body: Point): Skeleton {
   return {
     id,
-    label: `Mouse ${id}`,
+    label: `Animal ${id}`,
     body,
     nose: { x: body.x + 18, y: body.y - 14 },
   };
+}
+
+function displayAnimalLabel(label: string) {
+  return label.replace(/^mouse\b/i, 'Animal');
 }
 
 function makeFrameAnnotation(body: Point): FrameAnnotation {
   return {
     skeletons: [makeSkeleton(1, body)],
     selectedSkeletonId: 1,
+    events: [],
+    touched: false,
+  };
+}
+
+function makeEmptyFrameAnnotation(): FrameAnnotation {
+  return {
+    skeletons: [],
+    selectedSkeletonId: 0,
     events: [],
     touched: false,
   };
@@ -749,6 +823,7 @@ export default function Home() {
   const [workspaceSettingsByVideo, setWorkspaceSettingsByVideo] = useState<Record<string, SettingsSnapshot>>({});
   const [trackingRunsByVideo, setTrackingRunsByVideo] = useState<Record<string, TrackingRun>>({});
   const [projectNotice, setProjectNotice] = useState<string | null>(null);
+  const [isHeaderDropTarget, setIsHeaderDropTarget] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -767,6 +842,7 @@ export default function Home() {
     maze: true,
     wells: true,
     skeletons: true,
+    trajectory: true,
     events: true,
   });
   const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis>(initialAnalysis);
@@ -791,7 +867,8 @@ export default function Home() {
   const currentFrame = clamp(currentFrameIndex, 0, totalFrames - 1);
   const frameKey = String(currentFrame);
   const frameAnnotation =
-    annotationStore[activeVideoKey]?.[frameKey] ?? makeFrameAnnotation(selected.mouse);
+    annotationStore[activeVideoKey]?.[frameKey] ??
+    (uploadedVideo ? makeEmptyFrameAnnotation() : makeFrameAnnotation(selected.mouse));
   const skeletons = frameAnnotation.skeletons;
   const selectedSkeletonId = frameAnnotation.selectedSkeletonId;
   const events = frameAnnotation.events;
@@ -812,8 +889,10 @@ export default function Home() {
     [activeVideoKey, reviewFlagsByVideo],
   );
   const openReviewFlags = reviewFlags.filter((flag) => !flag.reviewed);
-  const currentReviewFlag = reviewFlags.find(
-    (flag) => flag.frame === currentFrame && !flag.reviewed,
+  const reviewGroups = useMemo(() => groupReviewFlags(reviewFlags), [reviewFlags]);
+  const openReviewGroups = useMemo(() => groupReviewFlags(openReviewFlags), [openReviewFlags]);
+  const currentReviewGroup = openReviewGroups.find(
+    (group) => currentFrame >= group.startFrame && currentFrame <= group.endFrame,
   );
   const frameAnnotations = useMemo(
     () => annotationStore[activeVideoKey] ?? {},
@@ -832,10 +911,20 @@ export default function Home() {
     [maxGapFrames, outlierDistancePx, smoothingWindow, trajectory],
   );
   const validTrajectory = processedTrajectory.filter((point) => point.valid);
-  const trajectoryPath = validTrajectory
-    .filter((point) => point.frame <= currentFrame)
-    .map((point) => `${point.x},${point.y}`)
-    .join(' ');
+  const trajectoryPaths = useMemo(() => {
+    const paths: string[] = [];
+    let segment: string[] = [];
+    for (const point of processedTrajectory) {
+      if (!point.valid || point.frame > currentFrame) {
+        if (segment.length > 1) paths.push(segment.join(' '));
+        segment = [];
+        continue;
+      }
+      segment.push(`${point.x},${point.y}`);
+    }
+    if (segment.length > 1) paths.push(segment.join(' '));
+    return paths;
+  }, [currentFrame, processedTrajectory]);
   const occupancyCells = useMemo(() => {
     const columns = 12;
     const rows = 9;
@@ -1001,7 +1090,7 @@ export default function Home() {
         distance.toFixed(2),
         platformDiameterCm.toFixed(1),
         holes.length,
-        'classical-cv-v1',
+        'classical-cv-v2-background',
       ],
     ];
     return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
@@ -1044,8 +1133,8 @@ export default function Home() {
         'event_type',
         'source',
         'well',
-        'start_frame',
-        'end_frame',
+        'start_frame_1_based',
+        'end_frame_1_based',
         'time_seconds',
         'duration_seconds',
         'event_confidence',
@@ -1074,7 +1163,7 @@ export default function Home() {
             ? 'manual'
             : 'auto-draft',
         event.terminal ? 'true' : 'false',
-        'classical-cv-v1',
+        'classical-cv-v2-background',
       ]),
     ];
     return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
@@ -1312,7 +1401,9 @@ export default function Home() {
               reviewQueue: {
                 flags: reviewFlags,
                 openCount: openReviewFlags.length,
-                currentFrameFlag: currentReviewFlag ?? null,
+                groups: reviewGroups,
+                openGroupCount: openReviewGroups.length,
+                currentFrameGroup: currentReviewGroup ?? null,
               },
               quality: {
                 processingPercent: processedPercent,
@@ -1372,8 +1463,10 @@ export default function Home() {
     frameAnnotation.touched,
     frameAnalysis,
     reviewFlags,
+    reviewGroups,
     openReviewFlags.length,
-    currentReviewFlag,
+    openReviewGroups.length,
+    currentReviewGroup,
     platformDiameterCm,
     pixelsPerCm,
     primaryErrors,
@@ -1485,10 +1578,16 @@ export default function Home() {
         setTrackingRunsByVideo(project.trackingRunsByVideo ?? {});
         setStrategyOverride(project.strategyOverride ?? 'auto');
         setCorrections(project.corrections ?? 0);
-        setLayers(project.layers ?? { maze: true, wells: true, skeletons: true, events: true });
+        setLayers({
+          maze: project.layers?.maze ?? true,
+          wells: project.layers?.wells ?? true,
+          skeletons: project.layers?.skeletons ?? true,
+          trajectory: project.layers?.trajectory ?? true,
+          events: project.layers?.events ?? true,
+        });
         setProjectNotice('Project restored. Add the same video files to reconnect their annotations.');
       } catch {
-        setProjectNotice('This file is not a compatible BarnesAI project.');
+        setProjectNotice('This file is not a compatible BarnesTrack project.');
       }
     };
     reader.readAsText(file);
@@ -1608,7 +1707,9 @@ export default function Home() {
   function updateFrameAnnotation(updater: (annotation: FrameAnnotation) => FrameAnnotation) {
     setAnnotationStore((current) => {
       const currentVideoAnnotations = current[activeVideoKey] ?? {};
-      const baseAnnotation = currentVideoAnnotations[frameKey] ?? makeFrameAnnotation(selected.mouse);
+      const baseAnnotation =
+        currentVideoAnnotations[frameKey] ??
+        (uploadedVideo ? makeEmptyFrameAnnotation() : makeFrameAnnotation(selected.mouse));
       const nextAnnotation = updater(baseAnnotation);
       return {
         ...current,
@@ -1635,16 +1736,7 @@ export default function Home() {
         skeleton.id === skeletonId ? { ...skeleton, [node]: point } : skeleton,
       ),
       selectedSkeletonId: skeletonId,
-    }));
-  }
-
-  function updateSkeletonPair(skeletonId: number, body: Point, nose: Point) {
-    updateFrameAnnotation((annotation) => ({
-      ...annotation,
-      skeletons: annotation.skeletons.map((skeleton) =>
-        skeleton.id === skeletonId ? { ...skeleton, body, nose } : skeleton,
-      ),
-      selectedSkeletonId: skeletonId,
+      detectionConfidence: undefined,
     }));
   }
 
@@ -1655,6 +1747,7 @@ export default function Home() {
       ...annotation,
       skeletons: [...annotation.skeletons, nextSkeleton],
       selectedSkeletonId: nextId,
+      detectionConfidence: undefined,
     }));
     setLayers((current) => ({ ...current, skeletons: true }));
     setCorrections((value) => value + 1);
@@ -1667,6 +1760,7 @@ export default function Home() {
       ...annotation,
       skeletons: nextSkeletons,
       selectedSkeletonId: nextSkeletons[0]?.id ?? 0,
+      detectionConfidence: undefined,
     }));
     setCorrections((value) => value + 1);
   }
@@ -1713,7 +1807,7 @@ export default function Home() {
   }
 
   function saveCurrentFrame() {
-    updateFrameAnnotation((annotation) => ({ ...annotation }));
+    updateFrameAnnotation((annotation) => ({ ...annotation, detectionConfidence: undefined }));
     setCorrections((value) => value + 1);
   }
 
@@ -1723,38 +1817,30 @@ export default function Home() {
       skeletons: [],
       selectedSkeletonId: 0,
       events: [],
+      detectionConfidence: undefined,
     }));
     setCorrections((value) => value + 1);
   }
 
-  function nearestHoleDistance(point: Point) {
-    return holes.reduce((nearest, hole) => {
-      const distanceToHole = Math.hypot(hole.x - point.x, hole.y - point.y);
-      return Math.min(nearest, distanceToHole);
-    }, Infinity);
-  }
-
-  function analyzeImageData(imageData: ImageData): FrameAnalysis {
+  function analyzeImageData(
+    imageData: ImageData,
+    referenceBody?: Point,
+    previousImageData?: ImageData,
+    background?: BackgroundModel,
+  ): FrameAnalysis {
     const { data, width, height } = imageData;
+    const hasPreviousFrame =
+      previousImageData?.width === width && previousImageData.height === height;
     const insideRoi = new Uint8Array(width * height);
     const candidates = new Uint8Array(width * height);
-    let luminanceSum = 0;
-    let luminanceSquaredSum = 0;
     let roiPixels = 0;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         const platformDistance = Math.hypot(x - platform.x, y - platform.y);
-        const holeDistance = nearestHoleDistance({ x, y });
-        const isInsidePlatform = platformDistance < platform.r * 0.95;
-        const isAwayFromHole = holeDistance > 13;
-        if (!isInsidePlatform || !isAwayFromHole) continue;
-        const offset = (y * width + x) * 4;
-        const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+        if (platformDistance >= platform.r * 0.96) continue;
         const index = y * width + x;
         insideRoi[index] = 1;
-        luminanceSum += luminance;
-        luminanceSquaredSum += luminance * luminance;
         roiPixels += 1;
       }
     }
@@ -1768,11 +1854,8 @@ export default function Home() {
       };
     }
 
-    const mean = luminanceSum / roiPixels;
-    const variance = luminanceSquaredSum / roiPixels - mean * mean;
-    const standardDeviation = Math.sqrt(Math.max(variance, 0));
-    const threshold = Math.max(15, Math.min(115, mean - standardDeviation * 0.75));
-    let darkPixels = 0;
+    const hasBackground = background?.width === width && background.height === height;
+    let foregroundPixels = 0;
 
     for (let y = 1; y < height - 1; y += 1) {
       for (let x = 1; x < width - 1; x += 1) {
@@ -1780,23 +1863,32 @@ export default function Home() {
         if (!insideRoi[index]) continue;
         const offset = index * 4;
         const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
-        if (luminance < threshold) {
+        const backgroundLuminance = hasBackground ? background.luminance[index] : 255;
+        // A well is dark but stationary; a mouse is a dark foreground object.
+        // Do not mask wells: retain their pixels only when they differ from
+        // the learned background, which also permits a mouse to cover a well.
+        const isDarkForeground = hasBackground
+          ? backgroundLuminance - luminance >= 14
+          : luminance < 85;
+        if (isDarkForeground) {
           candidates[index] = 1;
-          darkPixels += 1;
+          foregroundPixels += 1;
         }
       }
     }
 
     const visited = new Uint8Array(width * height);
-    let bestComponent: {
+    const plausibleComponents: Array<{
       pixels: number;
+      motionPixels: number;
+      contrastSum: number;
       sumX: number;
       sumY: number;
       minX: number;
       maxX: number;
       minY: number;
       maxY: number;
-    } | null = null;
+    }> = [];
 
     for (let y = 1; y < height - 1; y += 1) {
       for (let x = 1; x < width - 1; x += 1) {
@@ -1806,6 +1898,8 @@ export default function Home() {
         const stack = [startIndex];
         visited[startIndex] = 1;
         let pixels = 0;
+        let motionPixels = 0;
+        let contrastSum = 0;
         let sumX = 0;
         let sumY = 0;
         let minX = x;
@@ -1819,6 +1913,19 @@ export default function Home() {
           const pixelX = index % width;
           const pixelY = Math.floor(index / width);
           pixels += 1;
+          if (hasPreviousFrame) {
+            const offset = index * 4;
+            const previous = previousImageData.data;
+            const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+            const previousLuminance =
+              previous[offset] * 0.299 + previous[offset + 1] * 0.587 + previous[offset + 2] * 0.114;
+            if (Math.abs(luminance - previousLuminance) >= 16) motionPixels += 1;
+          }
+          if (hasBackground) {
+            const offset = index * 4;
+            const luminance = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+            contrastSum += Math.max(0, background.luminance[index] - luminance);
+          }
           sumX += pixelX;
           sumY += pixelY;
           minX = Math.min(minX, pixelX);
@@ -1837,21 +1944,66 @@ export default function Home() {
 
         const componentWidth = maxX - minX + 1;
         const componentHeight = maxY - minY + 1;
-        const plausibleSize = pixels >= 18 && pixels <= 6500;
-        const plausibleShape = componentWidth <= platform.r * 0.8 && componentHeight <= platform.r * 0.8;
-        if (plausibleSize && plausibleShape && (!bestComponent || pixels > bestComponent.pixels)) {
-          bestComponent = { pixels, sumX, sumY, minX, maxX, minY, maxY };
+        const plausibleSize = pixels >= 18 && pixels <= 3200;
+        const plausibleShape = componentWidth <= platform.r * 0.55 && componentHeight <= platform.r * 0.55;
+        if (plausibleSize && plausibleShape) {
+          plausibleComponents.push({
+            pixels,
+            motionPixels,
+            contrastSum,
+            sumX,
+            sumY,
+            minX,
+            maxX,
+            minY,
+            maxY,
+          });
         }
       }
+    }
+
+    let bestComponent = plausibleComponents.reduce<typeof plausibleComponents[number] | null>(
+      (best, candidate) => {
+        if (!best) return candidate;
+        const candidateScore = candidate.contrastSum / Math.max(1, candidate.pixels) +
+          candidate.motionPixels / Math.max(1, candidate.pixels) * 12;
+        const bestScore = best.contrastSum / Math.max(1, best.pixels) +
+          best.motionPixels / Math.max(1, best.pixels) * 12;
+        return candidateScore > bestScore ? candidate : best;
+      },
+      null,
+    );
+
+    if (referenceBody && plausibleComponents.length > 0) {
+      let closest: { component: (typeof plausibleComponents)[number]; distance: number } | null = null;
+      for (const candidate of plausibleComponents) {
+        const body = { x: candidate.sumX / candidate.pixels, y: candidate.sumY / candidate.pixels };
+        const distance = Math.hypot(body.x - referenceBody.x, body.y - referenceBody.y);
+        if (!closest || distance < closest.distance) closest = { component: candidate, distance };
+      }
+      const maxFrameTravelPx = 48;
+      if (!closest || closest.distance > maxFrameTravelPx) {
+        return {
+          status: 'error',
+          message: 'No foreground animal component near the previous frame',
+          confidence: 0,
+          source: uploadedVideo ? 'video' : 'sample',
+          darkPixels: foregroundPixels,
+          componentPixels: 0,
+        };
+      }
+      bestComponent = closest.component;
     }
 
     if (!bestComponent) {
       return {
         status: 'error',
-        message: 'No plausible mouse-sized dark component found',
+        message: hasPreviousFrame
+          ? 'No foreground animal-sized component found'
+          : 'No plausible animal-sized dark component found',
         confidence: 0,
         source: uploadedVideo ? 'video' : 'sample',
-        darkPixels,
+        darkPixels: foregroundPixels,
         componentPixels: 0,
       };
     }
@@ -1870,7 +2022,7 @@ export default function Home() {
         message: 'No wells are available for nose direction estimation',
         confidence: 0,
         source: uploadedVideo ? 'video' : 'sample',
-        darkPixels,
+        darkPixels: foregroundPixels,
         componentPixels: bestComponent.pixels,
       };
     }
@@ -1879,22 +2031,32 @@ export default function Home() {
       x: clamp(body.x + ((nearestTarget.x - body.x) / vectorLength) * 14, 0, width),
       y: clamp(body.y + ((nearestTarget.y - body.y) / vectorLength) * 14, 0, height),
     };
-    const occupancy = bestComponent.pixels / Math.max(1, darkPixels);
-    const confidence = clamp(occupancy * 1.6, 0.15, 0.86);
+    const contrast = bestComponent.contrastSum / Math.max(1, bestComponent.pixels);
+    const motionScore = hasPreviousFrame
+      ? bestComponent.motionPixels / Math.max(1, bestComponent.pixels)
+      : 0.5;
+    const continuityScore = referenceBody
+      ? clamp(1 - Math.hypot(body.x - referenceBody.x, body.y - referenceBody.y) / 48, 0, 1)
+      : 0.5;
+    const confidence = clamp(
+      0.15 + clamp((contrast - 14) / 60, 0, 1) * 0.5 + motionScore * 0.1 + continuityScore * 0.25,
+      0.15,
+      0.95,
+    );
 
     return {
       status: 'ready',
-      message: `Detected dark component at ${Math.round(body.x)}, ${Math.round(body.y)}`,
+      message: `Detected foreground component at ${Math.round(body.x)}, ${Math.round(body.y)}`,
       confidence,
       source: uploadedVideo ? 'video' : 'sample',
-      darkPixels,
+      darkPixels: foregroundPixels,
       componentPixels: bestComponent.pixels,
       body,
       nose,
     };
   }
 
-  function readRenderedFrameAnalysis(source: CanvasImageSource) {
+  function readRenderedImageData(source: CanvasImageSource) {
     const canvas = analysisCanvasRef.current;
     const context = canvas?.getContext('2d', { willReadFrequently: true });
     if (!canvas || !context) throw new Error('Frame canvas is not available');
@@ -1903,7 +2065,68 @@ export default function Home() {
     canvas.height = 480;
     context.clearRect(0, 0, 640, 480);
     context.drawImage(source, 0, 0, 640, 480);
-    return analyzeImageData(context.getImageData(0, 0, 640, 480));
+    return context.getImageData(0, 0, 640, 480);
+  }
+
+  function buildBackgroundModel(frames: ImageData[]): BackgroundModel | null {
+    const firstFrame = frames[0];
+    if (!firstFrame || frames.some((frame) => frame.width !== firstFrame.width || frame.height !== firstFrame.height)) {
+      return null;
+    }
+    const pixelCount = firstFrame.width * firstFrame.height;
+    const sums = new Float32Array(pixelCount);
+    const minimums = new Uint8Array(pixelCount);
+    const maximums = new Uint8Array(pixelCount);
+    minimums.fill(255);
+
+    for (const frame of frames) {
+      for (let index = 0; index < pixelCount; index += 1) {
+        const offset = index * 4;
+        const luminance = Math.round(
+          frame.data[offset] * 0.299 + frame.data[offset + 1] * 0.587 + frame.data[offset + 2] * 0.114,
+        );
+        sums[index] += luminance;
+        minimums[index] = Math.min(minimums[index], luminance);
+        maximums[index] = Math.max(maximums[index], luminance);
+      }
+    }
+
+    const divisor = frames.length >= 5 ? frames.length - 2 : frames.length;
+    const luminance = new Float32Array(pixelCount);
+    for (let index = 0; index < pixelCount; index += 1) {
+      // A trimmed temporal mean removes a mouse that appears in one or two
+      // background samples, while preserving stationary wells and shadows.
+      luminance[index] = frames.length >= 5
+        ? (sums[index] - minimums[index] - maximums[index]) / divisor
+        : sums[index] / divisor;
+    }
+    return { width: firstFrame.width, height: firstFrame.height, luminance };
+  }
+
+  async function learnVideoBackground(
+    video: HTMLVideoElement,
+    startFrame: number,
+    frameCount: number,
+  ) {
+    const sampleCount = Math.min(15, Math.max(7, Math.ceil(frameCount / 180)));
+    const frames: ImageData[] = [];
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+      if (stopTrackingRef.current) break;
+      const frame = startFrame + Math.round(
+        ((sampleIndex + 0.5) / sampleCount) * Math.max(0, frameCount - 1),
+      );
+      await waitForVideoSeek(video, frame / fps);
+      frames.push(readRenderedImageData(video));
+    }
+    return buildBackgroundModel(frames);
+  }
+
+  function readRenderedFrameAnalysis(
+    source: CanvasImageSource,
+    referenceBody?: Point,
+    previousImageData?: ImageData,
+  ) {
+    return analyzeImageData(readRenderedImageData(source), referenceBody, previousImageData);
   }
 
   function writeAnalysisToCurrentFrame(result: FrameAnalysis) {
@@ -1912,7 +2135,7 @@ export default function Home() {
     updateFrameAnnotation((annotation) => {
       const nextSkeleton = {
         id: nextId,
-        label: `Mouse ${nextId}`,
+      label: `Animal ${nextId}`,
         body: result.body as Point,
         nose: result.nose as Point,
       };
@@ -1995,17 +2218,32 @@ export default function Home() {
     return Array.from(byFrame.values()).sort((a, b) => a.frame - b.frame);
   }
 
-  function unflagCurrentFrameAndAdvance() {
-    if (!currentReviewFlag) return;
-    const nextFlag = openReviewFlags.find((flag) => flag.frame > currentReviewFlag.frame) ?? null;
+  function unflagCurrentReviewGroupAndAdvance() {
+    if (!currentReviewGroup) return;
+    const nextGroup = openReviewGroups.find(
+      (group) => group.startFrame > currentReviewGroup.endFrame,
+    ) ?? null;
     setReviewFlagsByVideo((current) => ({
       ...current,
       [activeVideoKey]: (current[activeVideoKey] ?? []).map((flag) =>
-        flag.frame === currentFrame ? { ...flag, reviewed: true } : flag,
+        flag.frame >= currentReviewGroup.startFrame && flag.frame <= currentReviewGroup.endFrame
+          ? { ...flag, reviewed: true }
+          : flag,
       ),
     }));
     setCorrections((value) => value + 1);
-    if (nextFlag) seekToFrame(nextFlag.frame);
+    if (nextGroup) seekToFrame(nextGroup.startFrame);
+  }
+
+  function clearAllReviewFlags() {
+    setReviewFlagsByVideo((current) => ({ ...current, [activeVideoKey]: [] }));
+    setSessionResults((current) => {
+      const result = current[activeVideoKey];
+      return result
+        ? { ...current, [activeVideoKey]: { ...result, flagsOpen: 0 } }
+        : current;
+    });
+    setCorrections((value) => value + 1);
   }
 
   async function trackFrameRange(maxFrames: number, label: string) {
@@ -2028,6 +2266,24 @@ export default function Home() {
     const framesToTrack = Math.min(maxFrames, totalFrames - startFrame);
     const trackedFrames: Record<string, FrameAnnotation> = {};
     const nextReviewFlags: ReviewFlag[] = [];
+    const priorTrajectoryPoint = buildTrajectory(frameAnnotations, fps)
+      .filter((point) => point.valid && point.frame < startFrame)
+      .at(-1);
+    let previousAcceptedBody = priorTrajectoryPoint
+      ? { x: priorTrajectoryPoint.x, y: priorTrajectoryPoint.y }
+      : undefined;
+    let previousFrameImage: ImageData | undefined;
+    let consecutiveTargetFrames = 0;
+    let targetDwellReached = false;
+    let consecutiveMissingFrames = 0;
+    let stoppedForPossibleEscape = false;
+    let hasLockedOnMouse = false;
+    let trackingAnchorLost = false;
+    let reacquisitionCount = 0;
+    const targetWellForTracking = holes.find((hole) => hole.id === targetHole) ?? null;
+    const minimumTargetDwellFrames = Math.max(1, Math.ceil(dwell * fps));
+    const minimumEscapeMissingFrames = Math.max(3, Math.ceil(fps * 0.25));
+    const maximumContinuousLossFrames = Math.max(8, Math.ceil(fps * 0.4));
     let processed = 0;
     let saved = 0;
 
@@ -2040,20 +2296,50 @@ export default function Home() {
     });
 
     try {
+      setTrackingRun({
+        status: 'running',
+        processed: 0,
+        total: framesToTrack,
+        saved: 0,
+        message: `${label}: learning static background`,
+      });
+      const backgroundModel = await learnVideoBackground(video, startFrame, framesToTrack);
+      if (stopTrackingRef.current) return;
+
       for (let offset = 0; offset < framesToTrack; offset += 1) {
         if (stopTrackingRef.current) break;
         const frame = startFrame + offset;
         const time = frame / fps;
         await waitForVideoSeek(video, time);
         processed = offset + 1;
-        const result = readRenderedFrameAnalysis(video);
+        const currentFrameImage = readRenderedImageData(video);
+        const result = analyzeImageData(
+          currentFrameImage,
+          previousAcceptedBody,
+          previousFrameImage,
+          backgroundModel ?? undefined,
+        );
+        previousFrameImage = currentFrameImage;
         if (result.status === 'ready' && result.body && result.nose) {
+          if (trackingAnchorLost) reacquisitionCount += 1;
+          previousAcceptedBody = result.body;
+          consecutiveMissingFrames = 0;
+          hasLockedOnMouse = true;
+          trackingAnchorLost = false;
+          const noseIsAtTarget = targetWellForTracking
+            ? Math.hypot(
+                result.nose.x - targetWellForTracking.x,
+                result.nose.y - targetWellForTracking.y,
+              ) <= Math.max(10, targetWellForTracking.radius + 8)
+            : false;
+          consecutiveTargetFrames = noseIsAtTarget ? consecutiveTargetFrames + 1 : 0;
+          targetDwellReached ||= consecutiveTargetFrames >= minimumTargetDwellFrames;
           const skeletonId = selectedSkeletonId || 1;
           trackedFrames[String(frame)] = {
             skeletons: [
               {
                 id: skeletonId,
-                label: `Mouse ${skeletonId}`,
+                label: `Animal ${skeletonId}`,
                 body: result.body,
                 nose: result.nose,
               },
@@ -2074,12 +2360,32 @@ export default function Home() {
             });
           }
         } else {
-          nextReviewFlags.push({
-            frame,
-            reason: 'no-detection',
-            confidence: 0,
-            reviewed: false,
-          });
+          consecutiveMissingFrames += 1;
+          // Before the mouse first appears, blank arena frames are expected and
+          // should not fill the review queue. After a lock, record only the
+          // start of an ordinary loss; target losses retain every frame as
+          // evidence for a possible escape.
+          if (
+            hasLockedOnMouse &&
+            (consecutiveMissingFrames === 1 || targetDwellReached)
+          ) {
+            nextReviewFlags.push({
+              frame,
+              reason: 'no-detection',
+              confidence: 0,
+              reviewed: false,
+            });
+          }
+          if (
+            targetDwellReached &&
+            consecutiveMissingFrames >= minimumEscapeMissingFrames
+          ) {
+            stoppedForPossibleEscape = true;
+          }
+          if (!targetDwellReached && consecutiveMissingFrames >= maximumContinuousLossFrames) {
+            previousAcceptedBody = undefined;
+            trackingAnchorLost = true;
+          }
         }
         if (offset % 5 === 0 || offset === framesToTrack - 1) {
           setCurrentTime(time);
@@ -2092,17 +2398,37 @@ export default function Home() {
             message: `${label}: frame ${frame + 1}`,
           });
         }
+        if (stoppedForPossibleEscape) break;
       }
 
+      const processedEndFrame = startFrame + processed - 1;
+      const retainManualAnnotations = (annotations: Record<string, FrameAnnotation>) =>
+        Object.fromEntries(
+          Object.entries(annotations).filter(([key, annotation]) => {
+            const frame = Number(key);
+            return (
+              !Number.isFinite(frame) ||
+              frame < startFrame ||
+              frame > processedEndFrame ||
+              annotation.detectionConfidence === undefined
+            );
+          }),
+        );
       setAnnotationStore((current) => ({
         ...current,
         [activeVideoKey]: {
-          ...current[activeVideoKey],
+          ...retainManualAnnotations(current[activeVideoKey] ?? {}),
           ...trackedFrames,
         },
       }));
-      const combinedAnnotations = { ...frameAnnotations, ...trackedFrames };
-      const combinedFlags = mergeReviewFlags(reviewFlags, nextReviewFlags);
+      const combinedAnnotations = {
+        ...retainManualAnnotations(frameAnnotations),
+        ...trackedFrames,
+      };
+      const retainedReviewFlags = reviewFlags.filter(
+        (flag) => flag.frame < startFrame || flag.frame > processedEndFrame,
+      );
+      const combinedFlags = mergeReviewFlags(retainedReviewFlags, nextReviewFlags);
       const completedEvents = detectEventLog(
         combinedAnnotations,
         holes,
@@ -2161,8 +2487,9 @@ export default function Home() {
         [activeVideoKey]: {
           videoId: activeVideoKey,
           video: activeLabel,
-          status:
-            stopTrackingRef.current || framesToTrack < totalFrames ? 'partial' : 'complete',
+          status: stopTrackingRef.current || processed < framesToTrack || framesToTrack < totalFrames
+            ? 'partial'
+            : 'complete',
           durationSeconds: activeDuration,
           fps,
           frameCount: totalFrames,
@@ -2182,7 +2509,7 @@ export default function Home() {
           noseProxyDistanceCm: distance,
           platformDiameterCm,
           wellCount: holes.length,
-          analysisVersion: 'classical-cv-v1',
+          analysisVersion: 'classical-cv-v2-background',
           smoothingWindow,
           maxGapFrames,
           outlierDistancePx,
@@ -2196,7 +2523,11 @@ export default function Home() {
         saved,
         message: stopTrackingRef.current
           ? `Stopped after saving ${saved} frames`
-          : `${label} saved ${saved} draft frame annotations`,
+          : stoppedForPossibleEscape
+            ? `Stopped after ${consecutiveMissingFrames} missing frames following the target well`
+            : `${label} saved ${saved} draft frame annotations${
+                reacquisitionCount > 0 ? ` · reacquired ${reacquisitionCount} time${reacquisitionCount === 1 ? '' : 's'}` : ''
+              }`,
       });
     } catch (error) {
       setTrackingRun({
@@ -2263,26 +2594,89 @@ export default function Home() {
   }
 
   function nearestSkeleton(point: Point) {
-    return skeletons.reduce<{ skeleton: Skeleton | null; distance: number }>(
+    return skeletons.reduce<{
+      skeleton: Skeleton | null;
+      node: 'body' | 'nose' | null;
+      distance: number;
+    }>(
       (nearest, skeleton) => {
         const bodyDistance = Math.hypot(skeleton.body.x - point.x, skeleton.body.y - point.y);
         const noseDistance = Math.hypot(skeleton.nose.x - point.x, skeleton.nose.y - point.y);
         const distanceToSkeleton = Math.min(bodyDistance, noseDistance);
         return distanceToSkeleton < nearest.distance
-          ? { skeleton, distance: distanceToSkeleton }
+          ? {
+              skeleton,
+              node: bodyDistance <= noseDistance ? 'body' : 'nose',
+              distance: distanceToSkeleton,
+            }
           : nearest;
       },
-      { skeleton: null, distance: Infinity },
+      { skeleton: null, node: null, distance: Infinity },
     );
   }
 
   function addEvent(type: 'investigation' | 'escape', point: Point) {
     const hole = nearestHole(point);
     if (!hole) return;
-    updateFrameAnnotation((annotation) => ({
-      ...annotation,
-      events: [...annotation.events, { type, frame: currentFrame, hole: hole.id, source: 'manual' }],
-    }));
+    if (Math.hypot(point.x - hole.x, point.y - hole.y) > hole.radius + 8) return;
+
+    if (type === 'escape') {
+      // A trial has one terminal escape. Choosing a new escape replaces an
+      // earlier terminal mark, while clicking the same well/frame clears it.
+      setAnnotationStore((current) => {
+        const currentVideoAnnotations = current[activeVideoKey] ?? {};
+        const baseAnnotation =
+          currentVideoAnnotations[frameKey] ??
+          (uploadedVideo ? makeEmptyFrameAnnotation() : makeFrameAnnotation(selected.mouse));
+        const alreadyMarked = baseAnnotation.events.some(
+          (event) => event.type === 'escape' && event.hole === hole.id,
+        );
+        const withoutEscapes = Object.fromEntries(
+          Object.entries(currentVideoAnnotations).map(([key, annotation]) => [
+            key,
+            { ...annotation, events: annotation.events.filter((event) => event.type !== 'escape') },
+          ]),
+        );
+        const currentAnnotation = withoutEscapes[frameKey] ?? {
+          ...baseAnnotation,
+          events: baseAnnotation.events.filter((event) => event.type !== 'escape'),
+        };
+        return {
+          ...current,
+          [activeVideoKey]: {
+            ...withoutEscapes,
+            [frameKey]: {
+              ...currentAnnotation,
+              events: alreadyMarked
+                ? currentAnnotation.events
+                : [
+                    ...currentAnnotation.events,
+                    { type, frame: currentFrame, hole: hole.id, source: 'manual' },
+                  ],
+              touched: true,
+              detectionConfidence: undefined,
+            },
+          },
+        };
+      });
+      setLayers((current) => ({ ...current, events: true }));
+      setCorrections((value) => value + 1);
+      return;
+    }
+
+    updateFrameAnnotation((annotation) => {
+      const exists = annotation.events.some(
+        (event) => event.type === type && event.hole === hole.id,
+      );
+      return {
+        ...annotation,
+        events: exists
+          ? annotation.events.filter((event) => !(event.type === type && event.hole === hole.id))
+          : [...annotation.events, { type, frame: currentFrame, hole: hole.id, source: 'manual' }],
+        detectionConfidence: undefined,
+      };
+    });
+    setLayers((current) => ({ ...current, events: true }));
     setCorrections((value) => value + 1);
   }
 
@@ -2293,14 +2687,11 @@ export default function Home() {
     if (toolMode === 'select') {
       if (!layers.skeletons) return;
       const nearest = nearestSkeleton(point);
-      if (nearest.skeleton && nearest.distance <= 28) {
+      if (nearest.skeleton && nearest.node && nearest.distance <= 18) {
         selectSkeleton(nearest.skeleton.id);
         setDragTarget({
-          type: 'skeleton',
+          type: nearest.node,
           skeletonId: nearest.skeleton.id,
-          start: point,
-          body: nearest.skeleton.body,
-          nose: nearest.skeleton.nose,
         });
       }
       return;
@@ -2322,21 +2713,7 @@ export default function Home() {
     }
     if (toolMode === 'add-nodes') {
       addSkeleton(point);
-      setToolMode('body');
-      return;
-    }
-    if (toolMode === 'body') {
-      if (!selectedSkeleton) return;
-      setLayers((current) => ({ ...current, skeletons: true }));
-      updateSkeletonNode(selectedSkeleton.id, 'body', point);
-      setDragTarget({ type: 'body', skeletonId: selectedSkeleton.id });
-      return;
-    }
-    if (toolMode === 'nose') {
-      if (!selectedSkeleton) return;
-      setLayers((current) => ({ ...current, skeletons: true }));
-      updateSkeletonNode(selectedSkeleton.id, 'nose', point);
-      setDragTarget({ type: 'nose', skeletonId: selectedSkeleton.id });
+      setToolMode('select');
       return;
     }
     if (toolMode === 'investigation') addEvent('investigation', point);
@@ -2367,16 +2744,6 @@ export default function Home() {
       );
       return;
     }
-    if (dragTarget.type === 'skeleton') {
-      const dx = point.x - dragTarget.start.x;
-      const dy = point.y - dragTarget.start.y;
-      updateSkeletonPair(
-        dragTarget.skeletonId,
-        { x: dragTarget.body.x + dx, y: dragTarget.body.y + dy },
-        { x: dragTarget.nose.x + dx, y: dragTarget.nose.y + dy },
-      );
-      return;
-    }
     if (dragTarget.type === 'body') updateSkeletonNode(dragTarget.skeletonId, 'body', point);
     if (dragTarget.type === 'nose') updateSkeletonNode(dragTarget.skeletonId, 'nose', point);
   }
@@ -2385,8 +2752,7 @@ export default function Home() {
     event.currentTarget.releasePointerCapture(event.pointerId);
     if (
       dragTarget?.type === 'body' ||
-      dragTarget?.type === 'nose' ||
-      dragTarget?.type === 'skeleton'
+      dragTarget?.type === 'nose'
     ) {
       setCorrections((value) => value + 1);
     }
@@ -2418,7 +2784,7 @@ export default function Home() {
         : trackingRunsByVideo,
       strategyOverride,
       corrections,
-      source: 'BarnesAI project state',
+      source: 'BarnesTrack project state',
     },
     null,
     2,
@@ -2427,19 +2793,15 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase text-muted-foreground">
-              Salk AIRC Task 1
-            </p>
-            <h1 className="text-2xl font-semibold tracking-normal">BarnesAI</h1>
-            <p className="max-w-3xl text-sm text-muted-foreground">
-              Frame-based Barnes maze review: video underlay, annotation overlay,
-              editable well map, mouse correction points, and spreadsheet-ready
-              exports.
-            </p>
+        <div className="mx-auto flex max-w-[108rem] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium text-muted-foreground">BarnesTrack workspace</p>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h1 className="text-xl font-semibold">Barnes Maze Review</h1>
+              <span className="text-sm text-muted-foreground">Video annotation and trial export</span>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-stretch gap-2">
             <input
               accept="video/mp4,video/*"
               className="sr-only"
@@ -2477,12 +2839,30 @@ export default function Home() {
               type="file"
             />
             <button
-              className="tool-button"
+              aria-label="Drop videos here or select video files"
+              className={`header-dropzone ${isHeaderDropTarget ? 'active' : ''}`}
               onClick={() => fileInputRef.current?.click()}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setIsHeaderDropTarget(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setIsHeaderDropTarget(false);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsHeaderDropTarget(false);
+                loadVideos(event.dataTransfer.files);
+              }}
               type="button"
             >
-              <FolderOpen size={16} aria-hidden="true" />
-              Add videos
+              <Upload aria-hidden="true" size={18} />
+              <span>
+                <strong>{isHeaderDropTarget ? 'Drop to add videos' : 'Drop videos here'}</strong>
+                <small>or browse files</small>
+              </span>
             </button>
             <button
               className="tool-button"
@@ -2500,15 +2880,11 @@ export default function Home() {
               <FileJson size={16} aria-hidden="true" />
               Open project
             </button>
-            <button className="tool-button primary" onClick={togglePlayback} type="button">
-              {isPlaying ? <Pause size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
           </div>
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-[108rem] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_270px]">
+      <section className="mx-auto grid max-w-[108rem] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_220px]">
         <section className="panel overflow-hidden">
           <div className="panel-heading">
             <div>
@@ -2530,7 +2906,7 @@ export default function Home() {
                 onClick={() =>
                   download(
                     projectJson,
-                    `${activeVideoKey.replaceAll(':', '-')}-barnesai-project.json`,
+                    `${activeVideoKey.replaceAll(':', '-')}-barnestrack-project.json`,
                     'application/json',
                   )
                 }
@@ -2609,17 +2985,27 @@ export default function Home() {
           <div className="frame-status-strip" aria-label="Frame review status">
             <section className="frame-status-card">
               <div className="frame-status-heading">
-                <h3>Current frame</h3>
+                <h3>
+                  Current frame
+                  <SectionInfo
+                    label="Current frame"
+                    placement="right"
+                    items={[
+                      'Shows the active frame and its saved annotation state.',
+                      'Body and nose coordinates update as you drag nodes.',
+                    ]}
+                  />
+                </h3>
                 <span>{frameAnnotation.touched ? 'saved' : 'draft'}</span>
               </div>
               {selectedSkeleton ? (
                 <p>
-                  {selectedSkeleton.label} · Body {Math.round(selectedSkeleton.body.x)},{' '}
+                  {displayAnimalLabel(selectedSkeleton.label)} · Body {Math.round(selectedSkeleton.body.x)},{' '}
                   {Math.round(selectedSkeleton.body.y)} · Nose {Math.round(selectedSkeleton.nose.x)},{' '}
                   {Math.round(selectedSkeleton.nose.y)}
                 </p>
               ) : (
-                <p>No skeleton selected</p>
+                <p>No animal selected</p>
               )}
               <small>
                 Frame events {events.length} · saved frames {savedFrameCount}
@@ -2634,6 +3020,13 @@ export default function Home() {
                     : frameAnalysis.status === 'error'
                       ? 'Analysis needs review'
                       : 'Frame analysis idle'}
+                  <SectionInfo
+                    label="Frame analysis"
+                    items={[
+                      'Analyzes only the displayed frame.',
+                      'Use it to inspect a draft before tracking a full range.',
+                    ]}
+                  />
                 </h3>
               </div>
               <p>{frameAnalysis.message}</p>
@@ -2658,6 +3051,14 @@ export default function Home() {
                       : trackingRun.status === 'error'
                         ? 'Tracking needs review'
                         : 'Tracking idle'}
+                  <SectionInfo
+                    label="Tracking"
+                    items={[
+                      'Track full processes the remaining video.',
+                      'Next 60 is a short validation pass.',
+                      'Flags identify uncertain or missing detections for review.',
+                    ]}
+                  />
                 </h3>
               </div>
               <progress
@@ -2693,24 +3094,45 @@ export default function Home() {
 
             <section className="frame-status-card">
               <div className="frame-status-heading">
-                <h3>Review queue</h3>
+                <h3>
+                  Review queue
+                  <SectionInfo
+                    label="Review queue"
+                    placement="left"
+                    items={[
+                      'Groups adjacent flagged frames into review ranges.',
+                      'Open Flags to jump, correct, review, or clear ranges.',
+                    ]}
+                  />
+                </h3>
                 <span>
-                  {openReviewFlags.length} flagged
+                  {openReviewGroups.length} {openReviewGroups.length === 1 ? 'range' : 'ranges'}
                 </span>
               </div>
               <p>
                 {reviewFlags.length > 0
-                  ? `${reviewFlags.length} flags generated by tracking`
+                  ? `${openReviewFlags.length} flagged frames in ${openReviewGroups.length} review ranges`
                   : 'No flagged frames'}
               </p>
-              <small>Open Flagged frames to review and correct.</small>
+              <small>Open Flagged frames to review a range, not every individual frame.</small>
             </section>
           </div>
 
           <div className="canvas-workspace">
             <aside className="canvas-dock canvas-dock-left" aria-label="Overlay tools and layers">
               <div className="dock-section">
-                <h3>Tools</h3>
+                <h3>
+                  Tools
+                  <SectionInfo
+                    label="Tools"
+                    placement="right"
+                    items={[
+                      'Nose / Body drags each node independently.',
+                      'Maze and Well align the arena geometry.',
+                      'Visit and Escape add manual behavior events.',
+                    ]}
+                  />
+                </h3>
                 <div className="tool-palette vertical" aria-label="Annotation tools">
                   {toolModes.map((tool) => (
                     <button
@@ -2726,12 +3148,23 @@ export default function Home() {
               </div>
 
               <div className="dock-section">
-                <h3>Layers</h3>
+                <h3>
+                  Layers
+                  <SectionInfo
+                    label="Layers"
+                    placement="right"
+                    items={[
+                      'Toggle overlay visibility without changing stored data.',
+                      'Hide trajectory or events to inspect the raw video.',
+                    ]}
+                  />
+                </h3>
                 <div className="layer-list">
                   {([
                     ['maze', 'Platform'],
                     ['wells', 'Wells'],
-                    ['skeletons', 'Mice / Skeleton'],
+                    ['skeletons', 'Animals / Skeleton'],
+                    ['trajectory', 'Trajectory'],
                     ['events', 'Events'],
                   ] as Array<[keyof LayerVisibility, string]>).map(([layer, label]) => (
                     <label key={layer}>
@@ -2829,10 +3262,14 @@ export default function Home() {
                         </g>
                       ))
                     : null}
+                  {layers.trajectory
+                    ? trajectoryPaths.map((path, index) => (
+                        <polyline className="trajectory-path" key={`${index}-${path.slice(0, 20)}`} points={path} />
+                      ))
+                    : null}
                   {layers.skeletons
                     ? (
                       <>
-                        {trajectoryPath ? <polyline className="trajectory-path" points={trajectoryPath} /> : null}
                         {skeletons.map((skeleton) => (
                         <g
                           className={
@@ -2880,16 +3317,79 @@ export default function Home() {
                 <span><i className="legend-nose" /> Nose proxy</span>
                 <span><i className="legend-target" /> Target well</span>
               </div>
+
+              <div className="playback-controls" aria-label="Video playback controls">
+                <div className="frame-controls">
+                  <button aria-label="Previous frame" onClick={() => stepFrame(-1)} type="button">
+                    <ChevronLeft size={17} aria-hidden="true" />
+                    Prev
+                  </button>
+                  <button aria-label="Play or pause" onClick={togglePlayback} type="button">
+                    {isPlaying ? <Pause size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+                    {isPlaying ? 'Pause' : 'Play'}
+                  </button>
+                  <button aria-label="Next frame" onClick={() => stepFrame(1)} type="button">
+                    Next
+                    <ChevronRight size={17} aria-hidden="true" />
+                  </button>
+                  <label className="jump-frame-control">
+                    <span>Frame</span>
+                    <input
+                      max={totalFrames}
+                      min="1"
+                      onChange={(event) => seekToFrame(Number(event.target.value) - 1)}
+                      type="number"
+                      value={currentFrame + 1}
+                    />
+                  </label>
+                  <output className="frame-count-readout">
+                    {totalFrames.toLocaleString()} frames
+                  </output>
+                  <label className="fps-control">
+                    <span>FPS</span>
+                    <input
+                      max="120"
+                      min="1"
+                      onChange={(event) => setFps(Number(event.target.value))}
+                      step="0.001"
+                      type="number"
+                      value={Number(fps.toFixed(3))}
+                    />
+                  </label>
+                </div>
+
+                <label className="scrub-control">
+                  <span>
+                    {currentTime.toFixed(2)} s / {activeDuration.toFixed(2)} s
+                  </span>
+                  <input
+                    aria-label="Video time"
+                    max={activeDuration || 0}
+                    min="0"
+                    onChange={(event) => {
+                      const time = Number(event.target.value);
+                      const frame = clamp(Math.round(time * fps), 0, totalFrames - 1);
+                      setCurrentTime(time);
+                      setCurrentFrameIndex(frame);
+                      expectedSeekFrameRef.current = frame;
+                      if (videoRef.current) videoRef.current.currentTime = time;
+                    }}
+                    step={1 / fps}
+                    type="range"
+                    value={Math.min(currentTime, activeDuration || 0)}
+                  />
+                </label>
+              </div>
             </div>
 
             <aside className="canvas-dock canvas-dock-right" aria-label="Overlay object lists">
               <div className="object-panel">
                 <div className="object-tabs" role="tablist" aria-label="Overlay objects">
                   {([
-                    ['mice', `Mice ${skeletons.length}`],
+                    ['mice', `Animals ${skeletons.length}`],
                     ['wells', `Wells ${holes.length}`],
                     ['events', `Events ${eventLog.length}`],
-                    ['flagged', `Flags ${openReviewFlags.length}`],
+                    ['flagged', `Flags ${openReviewGroups.length}`],
                   ] as Array<[ObjectPanelTab, string]>).map(([tab, label]) => (
                     <button
                       aria-selected={objectPanelTab === tab}
@@ -2907,7 +3407,18 @@ export default function Home() {
                 {objectPanelTab === 'mice' ? (
                   <section className="object-tab-panel" role="tabpanel">
                     <div className="object-panel-heading">
-                      <h3>Mice / Skeleton</h3>
+                      <h3>
+                        Animals / Skeleton
+                        <SectionInfo
+                          label="Animals"
+                          placement="left"
+                          items={[
+                            'Each animal has one body node and one nose node.',
+                            'Add or remove animals for recordings with multiple subjects.',
+                            'Use Nose / Body to manually correct either node.',
+                          ]}
+                        />
+                      </h3>
                       <div className="object-panel-actions">
                         <button onClick={() => addSkeleton()} type="button">
                           Add
@@ -2937,7 +3448,7 @@ export default function Home() {
                           onClick={() => selectSkeleton(skeleton.id)}
                           type="button"
                         >
-                          <strong>{skeleton.label}</strong>
+                            <strong>{displayAnimalLabel(skeleton.label)}</strong>
                           <span>
                             Body {Math.round(skeleton.body.x)}, {Math.round(skeleton.body.y)}
                           </span>
@@ -2953,7 +3464,18 @@ export default function Home() {
                 {objectPanelTab === 'wells' ? (
                   <section className="object-tab-panel" role="tabpanel">
                     <div className="object-panel-heading">
-                      <h3>Wells</h3>
+                      <h3>
+                        Wells
+                        <SectionInfo
+                          label="Wells"
+                          placement="left"
+                          items={[
+                            'Wells are editable circular regions used for visit events.',
+                            'Add or remove wells to match the apparatus.',
+                            'Changing radius changes the visit area for that well.',
+                          ]}
+                        />
+                      </h3>
                       <div className="object-panel-actions">
                         <button onClick={addWell} type="button">
                           Add
@@ -3004,7 +3526,18 @@ export default function Home() {
                 {objectPanelTab === 'events' ? (
                   <section className="object-tab-panel" role="tabpanel">
                     <div className="object-panel-heading compact">
-                      <h3>Events</h3>
+                      <h3>
+                        Events
+                        <SectionInfo
+                          label="Events"
+                          placement="left"
+                          items={[
+                            'Visits are derived from nose position and dwell time.',
+                            'Escape can be added manually after visual confirmation.',
+                            'Select an event to jump to its first frame.',
+                          ]}
+                        />
+                      </h3>
                       <span>{eventLog.length} detected</span>
                     </div>
                     <div className="object-tree">
@@ -3048,38 +3581,68 @@ export default function Home() {
                 {objectPanelTab === 'flagged' ? (
                   <section className="object-tab-panel" role="tabpanel">
                     <div className="object-panel-heading compact">
-                      <h3>Flagged frames</h3>
-                      <span>{openReviewFlags.length} open</span>
+                      <h3>
+                        Review ranges
+                        <SectionInfo
+                          label="Review ranges"
+                          placement="left"
+                          items={[
+                            'Ranges combine adjacent low-confidence or no-detection frames.',
+                            'Select a range to inspect and correct its start frame.',
+                            'Clear all flags removes review markers, not annotations.',
+                          ]}
+                        />
+                      </h3>
+                      <span>{openReviewGroups.length} open · {openReviewFlags.length} frames</span>
                     </div>
-                    {currentReviewFlag ? (
+                    {openReviewGroups.length > 0 ? (
                       <button
                         className="object-clear-button"
-                        onClick={unflagCurrentFrameAndAdvance}
+                        onClick={clearAllReviewFlags}
                         type="button"
                       >
-                        Unflag &amp; next
+                        Clear all flags
+                      </button>
+                    ) : null}
+                    {currentReviewGroup ? (
+                      <button
+                        className="object-clear-button"
+                        onClick={unflagCurrentReviewGroupAndAdvance}
+                        type="button"
+                      >
+                        Mark range reviewed &amp; next
                       </button>
                     ) : (
                       <p className="object-panel-note">
-                        Select a flagged frame, correct its overlay, then unflag it.
+                        Select a review range, inspect its start and end, then mark the range reviewed.
                       </p>
                     )}
                     <div className="object-tree">
-                      {openReviewFlags.length > 0 ? (
-                        openReviewFlags.map((flag) => (
+                      {openReviewGroups.length > 0 ? (
+                        openReviewGroups.map((group) => (
                           <button
-                            className={flag.frame === currentFrame ? 'active' : ''}
-                            key={flag.frame}
-                            onClick={() => seekToFrame(flag.frame)}
+                            className={
+                              currentFrame >= group.startFrame && currentFrame <= group.endFrame
+                                ? 'active'
+                                : ''
+                            }
+                            key={`${group.reason}-${group.startFrame}-${group.endFrame}`}
+                            onClick={() => seekToFrame(group.startFrame)}
                             type="button"
                           >
-                            <strong>Frame {flag.frame + 1}</strong>
-                            <span>{flag.reason.replace('-', ' ')}</span>
-                            <span>{Math.round(flag.confidence * 100)}% confidence</span>
+                            <strong>
+                              {group.startFrame === group.endFrame
+                                ? `Frame ${group.startFrame + 1}`
+                                : `Frames ${group.startFrame + 1}-${group.endFrame + 1}`}
+                            </strong>
+                            <span>{group.reason.replace('-', ' ')}</span>
+                            <span>
+                              {group.flags.length} frames · {Math.round(group.confidence * 100)}% confidence
+                            </span>
                           </button>
                         ))
                       ) : (
-                        <p>No flagged frames remain.</p>
+                        <p>No review ranges remain.</p>
                       )}
                     </div>
                   </section>
@@ -3088,72 +3651,17 @@ export default function Home() {
             </aside>
           </div>
 
-          <div className="frame-controls">
-            <button aria-label="Previous frame" onClick={() => stepFrame(-1)} type="button">
-              <ChevronLeft size={17} aria-hidden="true" />
-              Prev
-            </button>
-            <button aria-label="Play or pause" onClick={togglePlayback} type="button">
-              {isPlaying ? <Pause size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <button aria-label="Next frame" onClick={() => stepFrame(1)} type="button">
-              Next
-              <ChevronRight size={17} aria-hidden="true" />
-            </button>
-            <label>
-              <span>Jump frame</span>
-              <input
-                max={totalFrames}
-                min="1"
-                onChange={(event) => seekToFrame(Number(event.target.value) - 1)}
-                type="number"
-                value={currentFrame + 1}
-              />
-            </label>
-            <label className="frame-count-readout">
-              <span>Frame count</span>
-              <output>
-                {totalFrames.toLocaleString()} {frameCountSource === 'sample-metadata' ? 'source' : 'estimated'}
-              </output>
-            </label>
-            <label>
-              <span>FPS</span>
-              <input
-                max="120"
-                min="1"
-                onChange={(event) => setFps(Number(event.target.value))}
-                step="0.001"
-                type="number"
-                value={Number(fps.toFixed(3))}
-              />
-            </label>
-          </div>
-
-          <label className="scrub-control">
-            <span>
-              Video time {currentTime.toFixed(2)} s / {activeDuration.toFixed(2)} s
-            </span>
-            <input
-              max={activeDuration || 0}
-              min="0"
-              onChange={(event) => {
-                const time = Number(event.target.value);
-                const frame = clamp(Math.round(time * fps), 0, totalFrames - 1);
-                setCurrentTime(time);
-                setCurrentFrameIndex(frame);
-                expectedSeekFrameRef.current = frame;
-                if (videoRef.current) videoRef.current.currentTime = time;
-              }}
-              step={1 / fps}
-              type="range"
-              value={Math.min(currentTime, activeDuration || 0)}
-            />
-          </label>
-
           <details className="settings-presets collapsible-section" open>
             <summary className="collapsible-summary">
               <span>Settings presets</span>
+              <SectionInfo
+                label="Settings presets"
+                items={[
+                  'Load restores saved maze, event, and cleanup settings.',
+                  'Save overwrites the preset with the current settings.',
+                  'Presets never change annotations or exported results.',
+                ]}
+              />
               <small>
                 {activeSettingsPresetId
                   ? `Preset ${activeSettingsPresetId} active`
@@ -3204,6 +3712,14 @@ export default function Home() {
             <details className="settings-group" open>
               <summary>
                 <span>Event detection</span>
+                <SectionInfo
+                  label="Event detection"
+                  items={[
+                    'Target well defines the success and escape reference.',
+                    'Higher dwell requires a longer visit before it is logged.',
+                    'Larger nose distance makes a well visit easier to detect.',
+                  ]}
+                />
                 <small>Target well, dwell, and nose threshold</small>
               </summary>
               <div className="settings-group-content grid gap-3 md:grid-cols-3">
@@ -3245,6 +3761,15 @@ export default function Home() {
             <details className="settings-group" open>
               <summary>
                 <span>Maze geometry</span>
+                <SectionInfo
+                  label="Maze geometry"
+                  items={[
+                    'Platform diameter converts tracked pixels into cm metrics.',
+                    'Well size changes the visit area for every well.',
+                    'X, Y, radius, ring, and rotation align the ROI to the video.',
+                    'Geometry changes can alter tracking and event results.',
+                  ]}
+                />
                 <small>Platform, well size, placement, and rotation</small>
               </summary>
               <div className="settings-group-content grid gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -3330,6 +3855,14 @@ export default function Home() {
             <details className="settings-group" open>
               <summary>
                 <span>Trajectory cleanup</span>
+                <SectionInfo
+                  label="Trajectory cleanup"
+                  items={[
+                    'Smoothing reduces jitter but can soften sharp turns.',
+                    'Gap fill connects brief missing runs without changing raw points.',
+                    'Lower outlier jump rejects more large frame-to-frame moves.',
+                  ]}
+                />
                 <small>Applies to derived path metrics; raw annotations stay unchanged</small>
               </summary>
               <div className="settings-group-content grid gap-3 md:grid-cols-3">
@@ -3369,7 +3902,8 @@ export default function Home() {
           </div>
           <p className="roi-note">
             <MousePointer2 size={14} aria-hidden="true" />
-            Select a tool, then click or drag directly on the overlay. Left/right arrow
+            Choose a tool, then click or drag directly on the overlay. Nose / Body lets you
+            drag each node independently. Left/right arrow
             keys step by frame; space toggles playback.
           </p>
           <canvas
@@ -3382,7 +3916,17 @@ export default function Home() {
 
           <details className="results-section collapsible-section" open>
             <summary className="collapsible-summary">
-              <span>Results</span>
+              <span>
+                Results
+                <SectionInfo
+                  label="Results"
+                  items={[
+                    'Metrics are derived from the current annotations and settings.',
+                    'Review open flags before treating values as final.',
+                    'Changing Search strategy updates only the behavior label.',
+                  ]}
+                />
+              </span>
               <small>{eventLog.length > 0 ? 'event-derived' : 'pending'}</small>
             </summary>
 
@@ -3447,64 +3991,6 @@ export default function Home() {
                   </div>
                 ) : null}
 
-                <div className="result-actions">
-                  <button
-                    className="wide-action primary"
-                    onClick={() => download(csv, 'barnesai-trial-summary.csv', 'text/csv')}
-                    type="button"
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Summary CSV
-                  </button>
-                  <button
-                    className="wide-action"
-                    onClick={() =>
-                      downloadWorkbook(
-                        [
-                          { name: 'Summary', rows: parseCsv(csv) },
-                          { name: 'Events', rows: parseCsv(eventCsv) },
-                        ],
-                        'barnesai-trial-report.xlsx',
-                      )
-                    }
-                    type="button"
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Trial XLSX
-                  </button>
-                  <button
-                    className="wide-action"
-                    disabled={Object.keys(sessionResults).length === 0}
-                    onClick={() => download(cohortCsv, 'barnesai-cohort-summary.csv', 'text/csv')}
-                    type="button"
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Cohort CSV ({Object.keys(sessionResults).length})
-                  </button>
-                  <button
-                    className="wide-action"
-                    disabled={Object.keys(sessionResults).length === 0}
-                    onClick={() =>
-                      downloadWorkbook(
-                        [{ name: 'Cohort summary', rows: parseCsv(cohortCsv) }],
-                        'barnesai-cohort-summary.xlsx',
-                      )
-                    }
-                    type="button"
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Cohort XLSX ({Object.keys(sessionResults).length})
-                  </button>
-                  <button
-                    className="wide-action"
-                    disabled={eventLog.length === 0}
-                    onClick={() => download(eventCsv, 'barnesai-event-detail.csv', 'text/csv')}
-                    type="button"
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Event CSV
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -3512,21 +3998,21 @@ export default function Home() {
               <section className="quality-plot">
                 <div className="quality-plot-heading">
                   <strong>Tracking quality</strong>
-                  <span>{reviewFlags.length} flagged frames</span>
+                  <span>{reviewGroups.length} ranges · {reviewFlags.length} frames</span>
                 </div>
                 <div className="quality-timeline" aria-label="Flagged frame distribution">
-                  {reviewFlags.map((flag) => (
+                  {reviewGroups.map((group) => (
                     <button
-                      aria-label={`Jump to flagged frame ${flag.frame + 1}: ${flag.reason}`}
-                      className={`quality-flag ${flag.reason} ${flag.reviewed ? 'reviewed' : ''}`}
-                      key={`${flag.frame}-${flag.reason}`}
-                      onClick={() => seekToFrame(flag.frame)}
-                      style={{ left: `${(flag.frame / Math.max(1, totalFrames - 1)) * 100}%` }}
+                      aria-label={`Jump to review range ${group.startFrame + 1}-${group.endFrame + 1}: ${group.reason}`}
+                      className={`quality-flag ${group.reason} ${group.flags.every((flag) => flag.reviewed) ? 'reviewed' : ''}`}
+                      key={`${group.startFrame}-${group.endFrame}-${group.reason}`}
+                      onClick={() => seekToFrame(group.startFrame)}
+                      style={{ left: `${(group.startFrame / Math.max(1, totalFrames - 1)) * 100}%` }}
                       type="button"
                     />
                   ))}
                 </div>
-                <small>Each marker is clickable. Orange means low confidence; red means no detection.</small>
+                <small>Each marker is a clickable review range. Orange means low confidence; red means no detection.</small>
               </section>
               <section className="quality-plot">
                 <div className="quality-plot-heading">
@@ -3575,19 +4061,90 @@ export default function Home() {
                   : autoStrategy.reason}
               </span>
             </div>
+
+            <section className="result-export" aria-label="Export results">
+              <h3>Export</h3>
+              <div className="result-actions">
+                <button
+                  className="wide-action primary"
+                  onClick={() => download(csv, 'barnestrack-trial-summary.csv', 'text/csv')}
+                  type="button"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  Summary CSV
+                </button>
+                <button
+                  className="wide-action"
+                  onClick={() =>
+                    downloadWorkbook(
+                      [
+                        { name: 'Summary', rows: parseCsv(csv) },
+                        { name: 'Events', rows: parseCsv(eventCsv) },
+                      ],
+                      'barnestrack-trial-report.xlsx',
+                    )
+                  }
+                  type="button"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  Trial XLSX
+                </button>
+                <button
+                  className="wide-action"
+                  disabled={Object.keys(sessionResults).length === 0}
+                  onClick={() => download(cohortCsv, 'barnestrack-cohort-summary.csv', 'text/csv')}
+                  type="button"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  Cohort CSV ({Object.keys(sessionResults).length})
+                </button>
+                <button
+                  className="wide-action"
+                  disabled={Object.keys(sessionResults).length === 0}
+                  onClick={() =>
+                    downloadWorkbook(
+                      [{ name: 'Cohort summary', rows: parseCsv(cohortCsv) }],
+                      'barnestrack-cohort-summary.xlsx',
+                    )
+                  }
+                  type="button"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  Cohort XLSX ({Object.keys(sessionResults).length})
+                </button>
+                <button
+                  className="wide-action"
+                  disabled={eventLog.length === 0}
+                  onClick={() => download(eventCsv, 'barnestrack-event-detail.csv', 'text/csv')}
+                  type="button"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  Event CSV
+                </button>
+              </div>
+            </section>
           </details>
         </section>
 
         <aside className="panel order-3 guide-panel">
           <div className="panel-heading">
-            <h2>How to use</h2>
+            <h2>
+              How to use
+              <SectionInfo
+                label="How to use"
+                items={[
+                  'Follow the steps from video setup through review and export.',
+                  'Use presets to reuse calibrated settings across videos.',
+                ]}
+              />
+            </h2>
             <span>quick workflow</span>
           </div>
 
           <ol className="guide-steps">
             <li>
               <strong>Start or restore a session</strong>
-              <span>Use Add videos, Add folder, or drag files here. Open project restores saved annotations after you reconnect the same files.</span>
+              <span>Drop videos in the header, browse files, or add a folder. Open project restores saved annotations after you reconnect the same files.</span>
             </li>
             <li>
               <strong>Apply or calibrate settings</strong>
@@ -3595,7 +4152,7 @@ export default function Home() {
             </li>
             <li>
               <strong>Set target and check the overlay</strong>
-              <span>Select Target, click the escape well, then use Body or Nose only to correct a draft point.</span>
+              <span>Select Target, click the escape well, then use Nose / Body to drag either node on a draft point.</span>
             </li>
             <li>
               <strong>Track the trial</strong>
@@ -3603,7 +4160,7 @@ export default function Home() {
             </li>
             <li>
               <strong>Review flagged frames</strong>
-              <span>Open Flags, select a frame, correct its overlay, then choose Unflag &amp; next. An open no-detection run can appear as Possible escape; use Escape only when the mouse truly enters the box.</span>
+              <span>Open Flags, select a frame, correct its overlay, then choose Unflag &amp; next. An open no-detection run can appear as Possible escape; use Escape only when the animal truly enters the box.</span>
             </li>
             <li>
               <strong>Finalize and export</strong>
@@ -3622,5 +4179,37 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function SectionInfo({
+  label,
+  items,
+  placement = 'center',
+}: {
+  label: string;
+  items: string[];
+  placement?: 'left' | 'center' | 'right';
+}) {
+  return (
+    <button
+      aria-label={`${label} help`}
+      className={`section-info section-info-${placement}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      type="button"
+    >
+      <Info aria-hidden="true" size={15} />
+      <span className="section-info-tooltip" role="tooltip">
+        <strong>{label}</strong>
+        <ul>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </span>
+    </button>
   );
 }
