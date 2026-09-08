@@ -1479,6 +1479,7 @@ export default function Home() {
   ]);
 
   function selectSample(sample: SampleVideo) {
+    setTrackingRunsByVideo((current) => ({ ...current, [activeVideoKey]: trackingRun }));
     setActiveUploadedVideoId(null);
     setSelectedId(sample.id);
     setTargetHole(sample.targetHole);
@@ -1495,7 +1496,7 @@ export default function Home() {
     expectedSeekFrameRef.current = null;
     setToolMode('select');
     setFrameAnalysis(initialAnalysis);
-    setTrackingRun(initialTrackingRun);
+    setTrackingRun(trackingRunsByVideo[sample.id] ?? initialTrackingRun);
     setReviewFlagsByVideo((current) => ({ ...current, [sample.id]: current[sample.id] ?? [] }));
     applyActiveSettingsPreset();
   }
