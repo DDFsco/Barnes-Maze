@@ -983,7 +983,7 @@ export default function Home() {
   const finalStrategy = strategyOverride === 'auto' ? autoStrategy.label : strategyOverride;
   const sessionResultsWithCurrentSettings = useMemo(() => {
     const result = sessionResults[activeVideoKey];
-    if (!uploadedVideo || !result) return sessionResults;
+    if (!result) return sessionResults;
     return {
       ...sessionResults,
       [activeVideoKey]: {
@@ -1020,7 +1020,6 @@ export default function Home() {
     primaryErrors,
     sessionResults,
     smoothingWindow,
-    uploadedVideo,
   ]);
   const processedPercent =
     hasTrackingSummary ? (trackingRun.processed / Math.max(1, trackingRun.total)) * 100 : null;
@@ -1028,6 +1027,7 @@ export default function Home() {
   const noDetectionFlags = reviewFlags.filter((flag) => flag.reason === 'no-detection').length;
   const highConfidenceAnnotations = Math.max(0, trackingRun.saved - lowConfidenceFlags);
   const reviewedFlags = reviewFlags.filter((flag) => flag.reviewed).length;
+
   const csv = useMemo(() => {
     const rows = [
       [
@@ -1478,7 +1478,34 @@ export default function Home() {
     trackingRun,
   ]);
 
+  function persistCurrentSessionResult() {
+    setSessionResults((current) => {
+      const result = current[activeVideoKey];
+      if (!result) return current;
+      return {
+        ...current,
+        [activeVideoKey]: {
+          ...result,
+          pathCm: derivedPathCm,
+          speedCms: derivedSpeedCms,
+          targetQuadrantPct: derivedTargetQuadrantPct,
+          flagsOpen: openReviewFlags.length,
+          primaryLatency: derivedPrimaryLatency,
+          totalLatency: derivedTotalLatency,
+          primaryErrors: hasDerivedResults ? primaryErrors : null,
+          totalErrors: hasDerivedResults ? adjustedErrors : null,
+          events: eventLog.length,
+          strategy: finalStrategy,
+          smoothingWindow,
+          maxGapFrames,
+          outlierDistancePx,
+        },
+      };
+    });
+  }
+
   function selectSample(sample: SampleVideo) {
+    persistCurrentSessionResult();
     setTrackingRunsByVideo((current) => ({ ...current, [activeVideoKey]: trackingRun }));
     setActiveUploadedVideoId(null);
     setSelectedId(sample.id);
@@ -1511,6 +1538,7 @@ export default function Home() {
   }
 
   function selectUploadedVideo(video: UploadedVideo) {
+    persistCurrentSessionResult();
     if (uploadedVideo) {
       setWorkspaceSettingsByVideo((current) => ({ ...current, [activeVideoKey]: createSettingsSnapshot() }));
       setTrackingRunsByVideo((current) => ({ ...current, [activeVideoKey]: trackingRun }));
