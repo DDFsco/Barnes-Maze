@@ -3541,7 +3541,7 @@ export default function Home() {
                     </div>
                     <div className="object-tree">
                       {eventLog.length > 0 ? (
-                        eventLog.slice(0, 16).map((event) => (
+                        eventLog.map((event) => (
                           <button
                             className={
                               currentFrame >= event.startFrame && currentFrame <= event.endFrame
