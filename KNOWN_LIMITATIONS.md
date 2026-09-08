@@ -7,5 +7,4 @@
 - Manual annotations, presets, and review ranges persist in browser local storage. They can be restored with the exported project JSON after reconnecting the same source videos, but they are not synchronized across devices or browsers.
 - The maze overlay can be calibrated and saved as a preset, but automatic cross-video maze registration is not implemented.
 - Path length, speed, target-quadrant occupancy, and search strategy are derived from draft trajectories and require review before use in a scientific figure or manuscript.
-- The app has not yet been validated on a 2019-era laptop or at 200% browser zoom.
 - WebMCP tools are registered only when the host exposes `document.modelContext`; the main application does not depend on them.
