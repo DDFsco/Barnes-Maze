@@ -40,14 +40,6 @@ npm test
 npm run build
 ```
 
-## Deploy On Vercel
-
-1. Push this repository to GitHub.
-2. Import the repository in Vercel.
-3. Set Node.js to 22.13 or newer.
-4. Use the detected Vite preset with build command `npm run build` and output directory `dist`.
-5. No environment variables, database, API key, or server-side video upload is required.
-
 ## Review Workflow
 
 1. Drop one or more local videos into the header import area, or choose **Add folder**.
